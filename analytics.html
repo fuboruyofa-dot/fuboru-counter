@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Analytics — Fuboru Counter</title>
+  <link rel="stylesheet" href="/css/dashboard.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+  <style>
+    .period-tabs { display:flex; gap:6px; margin-bottom:20px; }
+    .period-tab {
+      padding:6px 16px; border-radius:8px; border:1px solid var(--border);
+      background:var(--bg2); color:var(--text3); font-size:13px;
+      cursor:pointer; transition:all 0.15s;
+    }
+    .period-tab.active { background:var(--orange-dim); border-color:var(--orange); color:var(--orange); font-weight:600; }
+    .analytics-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+    .chart-card { background:var(--bg2); border:1px solid var(--border); border-radius:14px; padding:20px; }
+    .chart-card.full { grid-column:span 2; }
+    .chart-title { font-family:'Syne',sans-serif; font-size:14px; font-weight:600; margin-bottom:4px; }
+    .chart-sub   { font-size:12px; color:var(--text3); margin-bottom:16px; }
+    .top-grid    { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px; }
+    .top-card    { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px; }
+    .top-card .lbl { font-size:11px; color:var(--text3); text-transform:uppercase; letter-spacing:0.6px; margin-bottom:8px; }
+    .top-card .val { font-family:'Syne',sans-serif; font-size:26px; font-weight:800; color:var(--text); }
+    .top-card .sub { font-size:12px; color:var(--text3); margin-top:4px; }
+    .mbar-item  { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+    .mbar-name  { font-size:12px; font-weight:500; width:70px; flex-shrink:0; color:var(--text2); }
+    .mbar-val   { font-family:'Syne',sans-serif; font-size:12px; font-weight:700; color:var(--orange); width:55px; text-align:right; flex-shrink:0; }
+    .loading-overlay { color:var(--text3); font-size:13px; text-align:center; padding:40px; }
+  </style>
+</head>
+<body id="pageBody">
+<script type="module">
+import {
+  db, requireAuth, initSidebar, renderSidebar,
+  collection, query, where, orderBy, getDocs
+} from '/js/firebase.js';
+
+const CHART_DEFAULTS = {
+  color: { grid:'rgba(255,255,255,0.04)', tick:'#475569' },
+  orange: '#F97316', green:'#22C55E', red:'#EF4444', blue:'#3B82F6', yellow:'#EAB308'
+};
+let charts = {};
+
+async function init() {
+  const user = await requireAuth();
+
+  document.getElementById('pageBody').innerHTML = `
+  ${renderSidebar('analytics', user.role)}
+  <div class="main">
+    <div class="topbar">
+      <h1>Analytics</h1>
+      <div class="topbar-actions">
+        <span id="periodLabel" style="font-size:12px;color:var(--text3)"></span>
+      </div>
+    </div>
+    <div class="page-content">
+      <div class="period-tabs">
+        <button class="period-tab active" onclick="setPeriod(7,this)">7 Hari</button>
+        <button class="period-tab" onclick="setPeriod(30,this)">30 Hari</button>
+        <button class="period-tab" onclick="setPeriod(90,this)">3 Bulan</button>
+      </div>
+      <div class="top-grid">
+        <div class="top-card"><div class="lbl">Total Produksi</div><div class="val" id="statTotal">-</div><div class="sub">pcs dalam periode</div></div>
+        <div class="top-card"><div class="lbl">Total Sesi</div><div class="val" id="statSesi">-</div><div class="sub">sesi produksi</div></div>
+        <div class="top-card"><div class="lbl">Completion Rate</div><div class="val" id="statRate">-</div><div class="sub">sesi selesai tepat target</div></div>
+        <div class="top-card"><div class="lbl">Rata-rata / Sesi</div><div class="val" id="statAvg">-</div><div class="sub">pcs per sesi</div></div>
+      </div>
+      <div class="analytics-grid">
+        <div class="chart-card full">
+          <div class="chart-title">Tren Produksi Harian</div>
+          <div class="chart-sub">Total pcs per hari dalam periode</div>
+          <canvas id="trendChart" height="65"></canvas>
+        </div>
+      </div>
+      <div class="analytics-grid">
+        <div class="chart-card">
+          <div class="chart-title">Produksi per Mesin</div>
+          <div class="chart-sub">Total pcs per mesin dalam periode</div>
+          <div id="machineBarList"><div class="loading-overlay">Memuat...</div></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Status Sesi</div>
+          <div class="chart-sub">Completed vs Incomplete vs Running</div>
+          <div style="max-width:220px;margin:0 auto">
+            <canvas id="statusChart"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="analytics-grid">
+        <div class="chart-card">
+          <div class="chart-title">Top 5 Produk</div>
+          <div class="chart-sub">Produk terbanyak diproduksi</div>
+          <canvas id="productChart" height="200"></canvas>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Distribusi Jam Produksi</div>
+          <div class="chart-sub">Sesi dimulai per jam dalam sehari</div>
+          <canvas id="hourChart" height="200"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  initSidebar(user);
+  await loadData(7);
+}
+
+window.setPeriod = async function(days, btn) {
+  document.querySelectorAll('.period-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  await loadData(days);
+};
+
+async function loadData(days) {
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  since.setHours(0, 0, 0, 0);
+
+  document.getElementById('periodLabel').textContent = `${days} hari terakhir`;
+
+  // Fetch sessions
+  const q = query(
+    collection(db, 'sessions'),
+    where('started_at', '>=', since),
+    orderBy('started_at', 'asc')
+  );
+  const snap = await getDocs(q);
+  const sessions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  renderSummary(sessions);
+  renderTrend(sessions, days);
+  renderMachineBars(sessions);
+  renderStatusChart(sessions);
+  renderProductChart(sessions);
+  renderHourChart(sessions);
+}
+
+// ── Summary cards ──
+function renderSummary(sessions) {
+  const total     = sessions.reduce((s, r) => s + (r.count || 0), 0);
+  const completed = sessions.filter(r => r.status === 'completed').length;
+  const rate      = sessions.length > 0 ? Math.round((completed / sessions.length) * 100) : 0;
+  const avg       = sessions.length > 0 ? Math.round(total / sessions.length) : 0;
+
+  document.getElementById('statTotal').textContent = total.toLocaleString();
+  document.getElementById('statSesi').textContent  = sessions.length;
+  document.getElementById('statRate').textContent  = `${rate}%`;
+  document.getElementById('statAvg').textContent   = avg.toLocaleString();
+}
+
+// ── Tren harian ──
+function renderTrend(sessions, days) {
+  const dayMap = {};
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    dayMap[d.toISOString().split('T')[0]] = 0;
+  }
+  sessions.forEach(r => {
+    const d = r.started_at?.toDate ? r.started_at.toDate().toISOString().split('T')[0] : null;
+    if (d && dayMap.hasOwnProperty(d)) dayMap[d] += (r.count || 0);
+  });
+
+  const labels = Object.keys(dayMap).map(d =>
+    new Date(d).toLocaleDateString('id-ID', { day:'2-digit', month:'short' })
+  );
+  const values = Object.values(dayMap);
+  const maxVal = Math.max(...values);
+
+  destroyChart('trendChart');
+  charts['trendChart'] = new Chart(document.getElementById('trendChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Produksi (pcs)',
+        data: values,
+        backgroundColor: values.map(v =>
+          v === maxVal && maxVal > 0 ? CHART_DEFAULTS.orange : 'rgba(249,115,22,0.2)'
+        ),
+        borderColor: CHART_DEFAULTS.orange,
+        borderWidth: 1,
+        borderRadius: 5,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: CHART_DEFAULTS.color.tick }, grid: { color: CHART_DEFAULTS.color.grid } },
+        y: { ticks: { color: CHART_DEFAULTS.color.tick }, grid: { color: CHART_DEFAULTS.color.grid }, beginAtZero: true }
+      }
+    }
+  });
+}
+
+// ── Produksi per mesin (bar horizontal custom) ──
+function renderMachineBars(sessions) {
+  const machMap = {};
+  sessions.forEach(r => {
+    const k = r.machine_code || 'Unknown';
+    machMap[k] = (machMap[k] || 0) + (r.count || 0);
+  });
+  const sorted = Object.entries(machMap).sort((a, b) => b[1] - a[1]);
+  const maxVal = sorted.length > 0 ? sorted[0][1] : 1;
+
+  const container = document.getElementById('machineBarList');
+  if (!sorted.length) {
+    container.innerHTML = `<div class="loading-overlay">Tidak ada data</div>`;
+    return;
+  }
+  container.innerHTML = sorted.map(([name, val]) => {
+    const pct = Math.round((val / maxVal) * 100);
+    return `
+    <div class="mbar-item">
+      <div class="mbar-name">${name}</div>
+      <div class="progress-bar" style="flex:1;height:8px">
+        <div class="progress-fill" style="width:${pct}%;background:var(--orange)"></div>
+      </div>
+      <div class="mbar-val">${val.toLocaleString()}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Status donut ──
+function renderStatusChart(sessions) {
+  const completed  = sessions.filter(r => r.status === 'completed').length;
+  const incomplete = sessions.filter(r => r.status === 'incomplete').length;
+  const running    = sessions.filter(r => r.status === 'running').length;
+
+  destroyChart('statusChart');
+  charts['statusChart'] = new Chart(document.getElementById('statusChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Completed', 'Incomplete', 'Running'],
+      datasets: [{
+        data: [completed, incomplete, running],
+        backgroundColor: [CHART_DEFAULTS.green, CHART_DEFAULTS.yellow, CHART_DEFAULTS.blue],
+        borderColor: '#161616',
+        borderWidth: 3,
+        hoverOffset: 6,
+      }]
+    },
+    options: {
+      responsive: true,
+      cutout: '65%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { color: '#94A3B8', font: { size: 12 }, padding: 16 }
+        }
+      }
+    }
+  });
+}
+
+// ── Top produk ──
+function renderProductChart(sessions) {
+  const prodMap = {};
+  sessions.forEach(r => {
+    const k = r.product_name || 'Unknown';
+    prodMap[k] = (prodMap[k] || 0) + (r.count || 0);
+  });
+  const sorted = Object.entries(prodMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const colors = [CHART_DEFAULTS.orange, CHART_DEFAULTS.blue, CHART_DEFAULTS.green, CHART_DEFAULTS.yellow, '#A855F7'];
+
+  destroyChart('productChart');
+  charts['productChart'] = new Chart(document.getElementById('productChart'), {
+    type: 'bar',
+    data: {
+      labels: sorted.map(([k]) => k),
+      datasets: [{
+        label: 'Total (pcs)',
+        data: sorted.map(([,v]) => v),
+        backgroundColor: sorted.map((_, i) => colors[i] + '33'),
+        borderColor: sorted.map((_, i) => colors[i]),
+        borderWidth: 2,
+        borderRadius: 6,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: CHART_DEFAULTS.color.tick }, grid: { color: CHART_DEFAULTS.color.grid }, beginAtZero: true },
+        y: { ticks: { color: CHART_DEFAULTS.color.tick }, grid: { display: false } }
+      }
+    }
+  });
+}
+
+// ── Distribusi jam ──
+function renderHourChart(sessions) {
+  const hourMap = Array(24).fill(0);
+  sessions.forEach(r => {
+    const d = r.started_at?.toDate ? r.started_at.toDate() : null;
+    if (d) hourMap[d.getHours()]++;
+  });
+
+  const labels = Array.from({length:24}, (_, i) => `${String(i).padStart(2,'0')}:00`);
+  const peakHour = hourMap.indexOf(Math.max(...hourMap));
+
+  destroyChart('hourChart');
+  charts['hourChart'] = new Chart(document.getElementById('hourChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Jumlah Sesi',
+        data: hourMap,
+        backgroundColor: hourMap.map((_, i) =>
+          i === peakHour ? CHART_DEFAULTS.orange : 'rgba(249,115,22,0.2)'
+        ),
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: CHART_DEFAULTS.color.tick, maxRotation: 90, font:{size:10} }, grid: { color: CHART_DEFAULTS.color.grid } },
+        y: { ticks: { color: CHART_DEFAULTS.color.tick, stepSize: 1 }, grid: { color: CHART_DEFAULTS.color.grid }, beginAtZero: true }
+      }
+    }
+  });
+}
+
+function destroyChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+init();
+</script>
+</body>
+</html>
