@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Login — Fuboru Counter</title>
+  <link rel="stylesheet" href="/css/dashboard.css"/>
+  <style>
+    body { display:flex; align-items:center; justify-content:center; background:var(--bg); min-height:100vh; }
+    .login-wrap { width:100%; max-width:400px; padding:24px; }
+    .login-logo {
+      display:flex; align-items:center; gap:12px;
+      justify-content:center; margin-bottom:32px;
+    }
+    .login-logo .logo {
+      width:44px; height:44px;
+      background:linear-gradient(135deg,var(--orange),var(--orange-dark));
+      border-radius:12px; display:flex; align-items:center; justify-content:center;
+      font-family:'Syne',sans-serif; font-weight:800; font-size:20px; color:white;
+      box-shadow:0 4px 16px rgba(249,115,22,0.4);
+    }
+    .login-logo .brand h1 { font-family:'Syne',sans-serif; font-size:20px; font-weight:700; }
+    .login-logo .brand p  { font-size:12px; color:var(--text3); }
+    .login-card {
+      background:var(--bg2); border:1px solid var(--border);
+      border-radius:16px; padding:28px;
+    }
+    .login-title { font-family:'Syne',sans-serif; font-size:18px; font-weight:700; margin-bottom:6px; }
+    .login-sub   { font-size:13px; color:var(--text3); margin-bottom:24px; }
+    .login-btn {
+      width:100%; padding:12px; background:var(--orange); color:white;
+      border:none; border-radius:10px; font-family:'DM Sans',sans-serif;
+      font-size:15px; font-weight:600; cursor:pointer; margin-top:8px;
+      transition:background 0.2s, transform 0.1s;
+    }
+    .login-btn:hover  { background:var(--orange-dark); transform:translateY(-1px); }
+    .login-btn:active { transform:translateY(0); }
+    .login-btn:disabled { background:var(--text3); cursor:not-allowed; transform:none; }
+    .err-msg {
+      background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3);
+      border-radius:8px; padding:10px 14px; font-size:13px; color:var(--red);
+      margin-bottom:16px; display:none;
+    }
+  </style>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-logo">
+    <div class="logo">F</div>
+    <div class="brand">
+      <h1>Fuboru Counter</h1>
+      <p>Production Monitoring System</p>
+    </div>
+  </div>
+  <div class="login-card">
+    <div class="login-title">Selamat Datang</div>
+    <div class="login-sub">Masuk untuk memantau produksi</div>
+    <div class="err-msg" id="errMsg"></div>
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" id="email" placeholder="admin@fuboru.com" autocomplete="email"/>
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password"/>
+    </div>
+    <button class="login-btn" id="loginBtn" onclick="doLogin()">Masuk</button>
+  </div>
+</div>
+
+<script type="module">
+import { auth, db, doc, getDoc }
+  from '/js/firebase.js';
+import { signInWithEmailAndPassword, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
+
+// Kalau sudah login, langsung ke dashboard
+onAuthStateChanged(auth, (user) => {
+  if (user) window.location.href = '/index.html';
+});
+
+window.doLogin = async function() {
+  const email = document.getElementById('email').value.trim();
+  const pass  = document.getElementById('password').value;
+  const btn   = document.getElementById('loginBtn');
+  const err   = document.getElementById('errMsg');
+
+  if (!email || !pass) {
+    err.style.display = 'block';
+    err.textContent   = 'Email dan password wajib diisi';
+    return;
+  }
+
+  btn.disabled    = true;
+  btn.textContent = 'Masuk...';
+  err.style.display = 'none';
+
+  try {
+    await signInWithEmailAndPassword(auth, email, pass);
+    window.location.href = '/index.html';
+  } catch(e) {
+    err.style.display = 'block';
+    err.textContent   = e.code === 'auth/invalid-credential'
+      ? 'Email atau password salah'
+      : 'Gagal login: ' + e.message;
+    btn.disabled    = false;
+    btn.textContent = 'Masuk';
+  }
+};
+
+// Enter key
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') window.doLogin();
+});
+</script>
+</body>
+</html>

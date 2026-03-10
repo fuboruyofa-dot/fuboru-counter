@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>History Log — Fuboru Counter</title>
+  <link rel="stylesheet" href="/css/dashboard.css"/>
+</head>
+<body id="pageBody">
+<script type="module">
+import {
+  db, requireAuth, initSidebar, renderSidebar,
+  formatDate, formatDateTime, formatDuration,
+  collection, query, where, orderBy, limit, getDocs, Timestamp
+} from '/js/firebase.js';
+
+async function init() {
+  const user = await requireAuth();
+  const params = new URLSearchParams(window.location.search);
+  const filterMachine = params.get('machine') || '';
+
+  document.getElementById('pageBody').innerHTML = `
+  ${renderSidebar('history', user.role)}
+  <div class="main">
+    <div class="topbar">
+      <h1>History Log</h1>
+      <div class="topbar-actions">
+        <button class="btn btn-secondary" onclick="exportExcel()">Export Excel</button>
+      </div>
+    </div>
+    <div class="page-content">
+      <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+        <div class="form-group" style="margin:0;flex:1;min-width:160px">
+          <label>Dari Tanggal</label>
+          <input type="date" id="fFrom"/>
+        </div>
+        <div class="form-group" style="margin:0;flex:1;min-width:160px">
+          <label>Sampai Tanggal</label>
+          <input type="date" id="fTo"/>
+        </div>
+        <div class="form-group" style="margin:0;flex:1;min-width:160px">
+          <label>Mesin</label>
+          <input type="text" id="fMachine" placeholder="Semua mesin" value="${filterMachine}"/>
+        </div>
+        <div class="form-group" style="margin:0;flex:1;min-width:120px">
+          <label>Status</label>
+          <select id="fStatus">
+            <option value="">Semua</option>
+            <option value="completed">Completed</option>
+            <option value="incomplete">Incomplete</option>
+            <option value="running">Running</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-primary" onclick="loadHistory()">Cari</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Waktu</th><th>Mesin</th><th>Operator</th><th>Produk</th><th>Layer</th><th>Jumlah</th><th>Target</th><th>Progress</th><th>Durasi</th><th>Status</th></tr></thead>
+          <tbody id="histBody"><tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text3)">Klik Cari untuk memuat data</td></tr></tbody>
+        </table>
+      </div>
+      <div style="font-size:12px;color:var(--text3);margin-top:12px;text-align:right" id="histCount"></div>
+    </div>
+  </div>`;
+
+  initSidebar(user);
+
+  // Set default tanggal
+  const today = new Date().toISOString().split('T')[0];
+  const week  = new Date(Date.now()-7*86400000).toISOString().split('T')[0];
+  document.getElementById('fFrom').value = week;
+  document.getElementById('fTo').value   = today;
+
+  if (filterMachine) loadHistory();
+}
+
+window.loadHistory = async function() {
+  const from    = document.getElementById('fFrom').value;
+  const to      = document.getElementById('fTo').value;
+  const machine = document.getElementById('fMachine').value.trim().toUpperCase();
+  const status  = document.getElementById('fStatus').value;
+  const tbody   = document.getElementById('histBody');
+
+  tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text3)">Memuat...</td></tr>`;
+
+  let q = query(collection(db,'sessions'), orderBy('started_at','desc'), limit(200));
+  if (from) q = query(collection(db,'sessions'), where('started_at','>=',new Date(from)), orderBy('started_at','desc'), limit(200));
+
+  const snap = await getDocs(q);
+  let rows = snap.docs.map(d=>({id:d.id,...d.data()}));
+
+  // Filter client-side
+  if (to)      rows = rows.filter(r => r.started_at?.toDate() <= new Date(to+'T23:59:59'));
+  if (machine) rows = rows.filter(r => r.machine_code===machine);
+  if (status)  rows = rows.filter(r => r.status===status);
+
+  document.getElementById('histCount').textContent = `${rows.length} sesi ditemukan`;
+
+  if (!rows.length) {
+    tbody.innerHTML=`<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text3)">Tidak ada data</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const pct = r.target>0 ? Math.min(100,Math.round((r.count/r.target)*100)) : 0;
+    const fc  = pct>=100?'var(--green)':pct>=60?'var(--orange)':'var(--red)';
+    const dur = r.finished_at && r.started_at ? Math.floor((r.finished_at.toDate()-r.started_at.toDate())/1000) : null;
+    const stMap = { completed:`<span class="badge badge-green">Completed</span>`, incomplete:`<span class="badge badge-orange">Incomplete</span>`, running:`<span class="badge badge-blue">Running</span>` };
+    return `<tr>
+      <td style="font-size:12px">${formatDateTime(r.started_at)}</td>
+      <td><code style="color:var(--orange);font-size:11px">${r.machine_code||'-'}</code></td>
+      <td>${r.operator_name||'-'}</td>
+      <td>${r.product_name||'-'}</td>
+      <td style="text-align:center">${r.layers||1}</td>
+      <td class="name">${(r.count||0).toLocaleString()}</td>
+      <td>${(r.target||0).toLocaleString()}</td>
+      <td><div style="display:flex;align-items:center;gap:6px;min-width:90px">
+        <div class="progress-bar" style="flex:1"><div class="progress-fill" style="width:${pct}%;background:${fc}"></div></div>
+        <span style="font-size:11px;color:${fc};width:32px">${pct}%</span>
+      </div></td>
+      <td style="font-size:12px">${dur?formatDuration(dur):'-'}</td>
+      <td>${stMap[r.status]||r.status}</td>
+    </tr>`;
+  }).join('');
+};
+
+window.exportExcel = function() {
+  const rows = [];
+  document.querySelectorAll('#histBody tr').forEach(tr => {
+    rows.push(Array.from(tr.querySelectorAll('td')).map(td=>td.innerText));
+  });
+  const headers = ['Waktu','Mesin','Operator','Produk','Layer','Jumlah','Target','Progress','Durasi','Status'];
+  const csv = [headers, ...rows].map(r=>r.join(',')).join('\n');
+  const a   = document.createElement('a');
+  a.href    = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download= `history_${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+};
+
+init();
+</script>
+</body>
+</html>

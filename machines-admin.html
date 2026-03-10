@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Kelola Mesin — Fuboru Counter</title>
+  <link rel="stylesheet" href="/css/dashboard.css"/>
+</head>
+<body id="pageBody">
+<script type="module">
+import {
+  db, requireAdmin, initSidebar, renderSidebar,
+  showToast, openModal, closeModal, formatDate,
+  collection, doc, getDocs, setDoc, updateDoc,
+  query, orderBy, serverTimestamp
+} from '/js/firebase.js';
+
+async function init() {
+  const user = await requireAdmin();
+  document.getElementById('pageBody').innerHTML = `
+  ${renderSidebar('machines', user.role)}
+  <div class="main">
+    <div class="topbar">
+      <h1>Kelola Mesin</h1>
+      <div class="topbar-actions">
+        <span id="machCount" style="font-size:12px;color:var(--text3)"></span>
+        <button class="btn btn-primary" onclick="openAdd()">+ Tambah Mesin</button>
+      </div>
+    </div>
+    <div class="page-content">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Kode</th><th>Nama Mesin</th><th>Lokasi</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead>
+          <tbody id="machBody"><tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text3)">Memuat...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="modalMach">
+    <div class="modal">
+      <div class="modal-header"><span class="modal-title" id="machTitle">Tambah Mesin</span><button class="modal-close" onclick="closeModal('modalMach')">✕</button></div>
+      <div class="form-group">
+        <label>Kode Mesin</label>
+        <input type="text" id="machCode" placeholder="PLONG1" style="text-transform:uppercase"/>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">⚠ Kode tidak bisa diubah setelah disimpan. Harus sama dengan MACHINE_CODE di ESP32.</div>
+      </div>
+      <div class="form-group"><label>Nama Mesin</label><input type="text" id="machName" placeholder="Mesin Plong 1"/></div>
+      <div class="form-group"><label>Lokasi</label><input type="text" id="machLoc" placeholder="Area Produksi A"/></div>
+      <input type="hidden" id="machDocId"/>
+      <div style="display:flex;gap:10px;margin-top:20px">
+        <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modalMach')">Batal</button>
+        <button class="btn btn-primary" style="flex:1" onclick="saveMach()">Simpan</button>
+      </div>
+    </div>
+  </div>`;
+
+  initSidebar(user);
+  loadMachines();
+}
+
+window.openAdd = function() {
+  document.getElementById('machTitle').textContent='Tambah Mesin';
+  ['machDocId','machCode','machName','machLoc'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('machCode').disabled=false;
+  openModal('modalMach');
+};
+
+window.editMach = function(id, data) {
+  document.getElementById('machTitle').textContent='Edit Mesin';
+  document.getElementById('machDocId').value=id;
+  document.getElementById('machCode').value=id;
+  document.getElementById('machCode').disabled=true;
+  document.getElementById('machName').value=data.machine_name;
+  document.getElementById('machLoc').value=data.location||'';
+  openModal('modalMach');
+};
+
+window.saveMach = async function() {
+  const id   = document.getElementById('machDocId').value;
+  const code = document.getElementById('machCode').value.trim().toUpperCase();
+  const name = document.getElementById('machName').value.trim();
+  const loc  = document.getElementById('machLoc').value.trim();
+  if (!code||!name) { showToast('Kode dan nama wajib diisi','error'); return; }
+
+  if (id) {
+    await updateDoc(doc(db,'machines',id),{machine_name:name, location:loc});
+    await updateDoc(doc(db,'machine_status',id),{machine_name:name, location:loc});
+  } else {
+    await setDoc(doc(db,'machines',code),{ machine_name:name, location:loc, is_active:true, created_at:serverTimestamp() });
+    await setDoc(doc(db,'machine_status',code),{ machine_code:code, machine_name:name, location:loc, status:'offline', count:0, count_raw:0, target:0, layers:1, session_id:null, operator_id:null, operator_name:null, product_id:null, product_name:null, started_at:null, last_seen:null });
+  }
+  showToast(id?'Mesin diupdate!':'Mesin ditambahkan!');
+  closeModal('modalMach'); loadMachines();
+};
+
+window.toggleMach = async function(id, active) {
+  await updateDoc(doc(db,'machines',id),{is_active:!active});
+  showToast(!active?'Mesin diaktifkan':'Mesin dinonaktifkan');
+  loadMachines();
+};
+
+async function loadMachines() {
+  const snap = await getDocs(query(collection(db,'machines'), orderBy('machine_name')));
+  document.getElementById('machCount').textContent=`${snap.docs.length}/30 mesin`;
+  const tbody=document.getElementById('machBody');
+  if (snap.empty) { tbody.innerHTML=`<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text3)">Belum ada mesin</td></tr>`; return; }
+  tbody.innerHTML=snap.docs.map(d=>{
+    const m={id:d.id,...d.data()};
+    return `<tr>
+      <td><code style="color:var(--orange);font-size:12px;background:var(--bg3);padding:3px 8px;border-radius:5px">${m.id}</code></td>
+      <td class="name">${m.machine_name}</td>
+      <td style="color:var(--text3)">${m.location||'-'}</td>
+      <td>${m.is_active?'<span class="badge badge-green">Aktif</span>':'<span class="badge badge-gray">Nonaktif</span>'}</td>
+      <td style="font-size:12px;color:var(--text3)">${formatDate(m.created_at)}</td>
+      <td><div style="display:flex;gap:6px">
+        <button class="btn btn-secondary btn-sm" onclick="editMach('${m.id}',${JSON.stringify(m).replace(/"/g,'&quot;')})">Edit</button>
+        <button class="btn btn-${m.is_active?'danger':'secondary'} btn-sm" onclick="toggleMach('${m.id}',${m.is_active})">${m.is_active?'Nonaktifkan':'Aktifkan'}</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+init();
+</script>
+</body>
+</html>

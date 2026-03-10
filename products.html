@@ -1,0 +1,116 @@
+<!-- products.html -->
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Produk & Target — Fuboru Counter</title>
+  <link rel="stylesheet" href="/css/dashboard.css"/>
+</head>
+<body id="pageBody">
+<script type="module">
+import {
+  db, requireAdmin, initSidebar, renderSidebar,
+  showToast, openModal, closeModal, formatDate,
+  collection, doc, getDocs, addDoc, updateDoc,
+  query, orderBy, serverTimestamp
+} from '/js/firebase.js';
+
+async function init() {
+  const user = await requireAdmin();
+  document.getElementById('pageBody').innerHTML = `
+  ${renderSidebar('products', user.role)}
+  <div class="main">
+    <div class="topbar">
+      <h1>Produk & Target</h1>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" onclick="openAdd()">+ Tambah Produk</button>
+      </div>
+    </div>
+    <div class="page-content">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Nama Produk</th><th>Target / Sesi</th><th>Deskripsi</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead>
+          <tbody id="prodBody"><tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Memuat...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="modalProd">
+    <div class="modal">
+      <div class="modal-header"><span class="modal-title" id="prodModalTitle">Tambah Produk</span><button class="modal-close" onclick="closeModal('modalProd')">✕</button></div>
+      <div class="form-group"><label>Nama Produk</label><input type="text" id="prodName" placeholder="Nama produk"/></div>
+      <div class="form-group"><label>Target per Sesi</label><input type="number" id="prodTarget" placeholder="200" min="1"/></div>
+      <div class="form-group"><label>Deskripsi (opsional)</label><input type="text" id="prodDesc" placeholder="Keterangan produk"/></div>
+      <input type="hidden" id="prodDocId"/>
+      <div style="display:flex;gap:10px;margin-top:20px">
+        <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modalProd')">Batal</button>
+        <button class="btn btn-primary" style="flex:1" onclick="saveProd()">Simpan</button>
+      </div>
+    </div>
+  </div>`;
+
+  initSidebar(user);
+  loadProducts();
+}
+
+window.openAdd = function() {
+  document.getElementById('prodModalTitle').textContent='Tambah Produk';
+  ['prodDocId','prodName','prodDesc'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('prodTarget').value='';
+  openModal('modalProd');
+};
+
+window.editProd = function(id, data) {
+  document.getElementById('prodModalTitle').textContent='Edit Produk';
+  document.getElementById('prodDocId').value=id;
+  document.getElementById('prodName').value=data.name;
+  document.getElementById('prodTarget').value=data.target;
+  document.getElementById('prodDesc').value=data.description||'';
+  openModal('modalProd');
+};
+
+window.saveProd = async function() {
+  const id     = document.getElementById('prodDocId').value;
+  const name   = document.getElementById('prodName').value.trim();
+  const target = parseInt(document.getElementById('prodTarget').value);
+  const desc   = document.getElementById('prodDesc').value.trim();
+  if (!name || !target) { showToast('Nama dan target wajib diisi','error'); return; }
+  const body = { name, target, description:desc };
+  if (id) await updateDoc(doc(db,'products',id), body);
+  else    await addDoc(collection(db,'products'), {...body, is_active:true, created_at:serverTimestamp()});
+  showToast(id?'Produk diupdate!':'Produk ditambahkan!');
+  closeModal('modalProd'); loadProducts();
+};
+
+window.toggleProd = async function(id, active) {
+  await updateDoc(doc(db,'products',id), {is_active:!active});
+  showToast(!active?'Produk diaktifkan':'Produk dinonaktifkan');
+  loadProducts();
+};
+
+async function loadProducts() {
+  const snap = await getDocs(query(collection(db,'products'), orderBy('name')));
+  const tbody = document.getElementById('prodBody');
+  if (snap.empty) { tbody.innerHTML=`<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Belum ada produk</td></tr>`; return; }
+  tbody.innerHTML = snap.docs.map((d,i) => {
+    const p={id:d.id,...d.data()};
+    return `<tr>
+      <td style="color:var(--text3)">${i+1}</td>
+      <td class="name">${p.name}</td>
+      <td><span style="font-family:'Syne',sans-serif;font-weight:700;color:var(--orange)">${p.target}</span> pcs</td>
+      <td style="color:var(--text3)">${p.description||'-'}</td>
+      <td>${p.is_active?'<span class="badge badge-green">Aktif</span>':'<span class="badge badge-gray">Nonaktif</span>'}</td>
+      <td style="font-size:12px;color:var(--text3)">${formatDate(p.created_at)}</td>
+      <td><div style="display:flex;gap:6px">
+        <button class="btn btn-secondary btn-sm" onclick="editProd('${p.id}',${JSON.stringify(p).replace(/"/g,'&quot;')})">Edit</button>
+        <button class="btn btn-${p.is_active?'danger':'secondary'} btn-sm" onclick="toggleProd('${p.id}',${p.is_active})">${p.is_active?'Nonaktifkan':'Aktifkan'}</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+init();
+</script>
+</body>
+</html>
