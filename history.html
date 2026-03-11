@@ -25,7 +25,12 @@ async function init() {
     <div class="topbar">
       <h1>History Log</h1>
       <div class="topbar-actions">
-        <button class="btn btn-secondary" onclick="exportExcel()">Export Excel</button>
+        <div style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text3)">
+          <div class="live-dot" style="background:var(--blue);width:6px;height:6px;border-radius:50%;animation:blink 2s infinite"></div>
+          Auto-refresh 30d
+        </div>
+        <button class="btn btn-secondary" onclick="loadHistory()">↻ Refresh</button>
+        <button class="btn btn-secondary" onclick="exportExcel()">Export CSV</button>
       </div>
     </div>
     <div class="page-content">
@@ -73,30 +78,68 @@ async function init() {
   document.getElementById('fFrom').value = week;
   document.getElementById('fTo').value   = today;
 
-  if (filterMachine) loadHistory();
+  // Auto-load langsung saat buka halaman
+  await loadHistory();
+
+  // Auto-refresh tiap 30 detik (untuk update sesi running)
+  setInterval(() => {
+    loadHistory(true); // silent = tidak tampilkan loading
+  }, 30000);
 }
 
-window.loadHistory = async function() {
+window.loadHistory = async function(silent = false) {
   const from    = document.getElementById('fFrom').value;
   const to      = document.getElementById('fTo').value;
   const machine = document.getElementById('fMachine').value.trim().toUpperCase();
   const status  = document.getElementById('fStatus').value;
   const tbody   = document.getElementById('histBody');
 
-  tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text3)">Memuat...</td></tr>`;
+  if (!silent) {
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text3)">Memuat...</td></tr>`;
+  }
 
-  let q = query(collection(db,'sessions'), orderBy('started_at','desc'), limit(200));
-  if (from) q = query(collection(db,'sessions'), where('started_at','>=',new Date(from)), orderBy('started_at','desc'), limit(200));
-
-  const snap = await getDocs(q);
-  let rows = snap.docs.map(d=>({id:d.id,...d.data()}));
+  let rows = [];
+  try {
+    // Query utama: pakai started_at range
+    let q = query(collection(db,'sessions'), orderBy('started_at','desc'), limit(200));
+    if (from) {
+      q = query(
+        collection(db,'sessions'),
+        where('started_at','>=', new Date(from)),
+        orderBy('started_at','desc'),
+        limit(200)
+      );
+    }
+    const snap = await getDocs(q);
+    rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) {
+    // Fallback: ambil semua tanpa filter date (kalau index belum dibuat)
+    console.warn('[history] Query index error, fallback:', e.message);
+    try {
+      const snap2 = await getDocs(query(collection(db,'sessions'), limit(200)));
+      rows = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch(e2) {
+      console.error('[history] Fallback query gagal:', e2);
+    }
+  }
 
   // Filter client-side
-  if (to)      rows = rows.filter(r => r.started_at?.toDate() <= new Date(to+'T23:59:59'));
-  if (machine) rows = rows.filter(r => r.machine_code===machine);
-  if (status)  rows = rows.filter(r => r.status===status);
+  if (to)      rows = rows.filter(r => !r.started_at || r.started_at?.toDate() <= new Date(to+'T23:59:59'));
+  if (from)    rows = rows.filter(r => !r.started_at || r.started_at?.toDate() >= new Date(from));
+  if (machine) rows = rows.filter(r => r.machine_code === machine);
+  if (status)  rows = rows.filter(r => r.status === status);
 
-  document.getElementById('histCount').textContent = `${rows.length} sesi ditemukan`;
+  // Sort: terbaru di atas (kalau started_at ada), yang tidak ada di bawah
+  rows.sort((a, b) => {
+    const ta = a.started_at?.toDate?.() || new Date(0);
+    const tb = b.started_at?.toDate?.() || new Date(0);
+    return tb - ta;
+  });
+
+  // Update info baris + waktu refresh
+  const now = new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  document.getElementById('histCount').innerHTML =
+    `${rows.length} sesi ditemukan &nbsp;·&nbsp; <span style="color:var(--text3)">Update: ${now}</span>`;
 
   if (!rows.length) {
     tbody.innerHTML=`<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text3)">Tidak ada data</td></tr>`;
@@ -104,11 +147,17 @@ window.loadHistory = async function() {
   }
 
   tbody.innerHTML = rows.map(r => {
-    const pct = r.target>0 ? Math.min(100,Math.round((r.count/r.target)*100)) : 0;
+    const pct = r.target>0 ? Math.min(100,Math.round(((r.count||0)/r.target)*100)) : 0;
     const fc  = pct>=100?'var(--green)':pct>=60?'var(--orange)':'var(--red)';
     const dur = r.finished_at && r.started_at ? Math.floor((r.finished_at.toDate()-r.started_at.toDate())/1000) : null;
-    const stMap = { completed:`<span class="badge badge-green">Completed</span>`, incomplete:`<span class="badge badge-orange">Incomplete</span>`, running:`<span class="badge badge-blue">Running</span>` };
-    return `<tr>
+    const stMap = {
+      completed: `<span class="badge badge-green">Completed</span>`,
+      incomplete:`<span class="badge badge-orange">Incomplete</span>`,
+      running:   `<span class="badge badge-blue">Running</span>`
+    };
+    // Row running diberi highlight
+    const rowStyle = r.status==='running' ? 'background:rgba(59,130,246,0.05)' : '';
+    return `<tr style="${rowStyle}">
       <td style="font-size:12px">${formatDateTime(r.started_at)}</td>
       <td><code style="color:var(--orange);font-size:11px">${r.machine_code||'-'}</code></td>
       <td>${r.operator_name||'-'}</td>
@@ -120,7 +169,7 @@ window.loadHistory = async function() {
         <div class="progress-bar" style="flex:1"><div class="progress-fill" style="width:${pct}%;background:${fc}"></div></div>
         <span style="font-size:11px;color:${fc};width:32px">${pct}%</span>
       </div></td>
-      <td style="font-size:12px">${dur?formatDuration(dur):'-'}</td>
+      <td style="font-size:12px">${dur ? formatDuration(dur) : r.status==='running' ? '<span style="color:var(--blue)">Berjalan</span>' : '-'}</td>
       <td>${stMap[r.status]||r.status}</td>
     </tr>`;
   }).join('');
