@@ -195,21 +195,9 @@ async function init() {
   await loadChartData();
 }
 
-const OFFLINE_TIMEOUT_SEC = 90;
-
-function resolveStatus(m) {
-  if (!m.status || m.status === 'offline' || m.status === 'stopped') return m.status || 'offline';
-  if (m.last_seen) {
-    const ls   = m.last_seen.toDate ? m.last_seen.toDate() : new Date(m.last_seen);
-    const diff = (Date.now() - ls.getTime()) / 1000;
-    if (diff > OFFLINE_TIMEOUT_SEC) return 'offline';
-  }
-  return m.status;
-}
-
 // ── Header ──
 function renderHeader(m) {
-  const status = resolveStatus(m);
+  const status = m.status || 'offline';  // percaya langsung ke Firestore
   const colors = { running:'#22C55E', idle:'#EAB308', stopped:'#EF4444', offline:'#475569' };
   const color  = colors[status] || colors.offline;
 
