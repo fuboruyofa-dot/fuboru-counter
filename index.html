@@ -136,22 +136,6 @@ function startClock() {
 
 const STATUS_COLOR = { running:'#22C55E', idle:'#EAB308', stopped:'#EF4444', offline:'#475569' };
 
-// Timeout: kalau last_seen > 90 detik lalu → anggap offline
-const OFFLINE_TIMEOUT_SEC = 90;
-
-function resolveStatus(m) {
-  // Kalau Firestore bilang offline/stopped → percaya langsung
-  if (!m.status || m.status === 'offline' || m.status === 'stopped') return m.status || 'offline';
-
-  // Kalau running/idle → cek last_seen, kalau terlalu lama → offline
-  if (m.last_seen) {
-    const lastSeen = m.last_seen.toDate ? m.last_seen.toDate() : new Date(m.last_seen);
-    const diffSec  = (Date.now() - lastSeen.getTime()) / 1000;
-    if (diffSec > OFFLINE_TIMEOUT_SEC) return 'offline';
-  }
-  return m.status;
-}
-
 function renderMachines(machines) {
   const grid = document.getElementById('machineGrid');
   if (!machines.length) {
@@ -159,7 +143,7 @@ function renderMachines(machines) {
     return;
   }
   grid.innerHTML = machines.map(m => {
-    const status    = resolveStatus(m);
+    const status    = m.status || 'offline';
     const color     = STATUS_COLOR[status] || STATUS_COLOR.offline;
     const count     = m.count  || 0;
     const target    = m.target || 0;
@@ -167,10 +151,10 @@ function renderMachines(machines) {
     const fillColor = pct>=100 ? 'var(--green)' : pct>=60 ? 'var(--orange)' : 'var(--red)';
     const statusLabel = { running:'Running', idle:'Idle', stopped:'Stop', offline:'Offline' };
 
-    // Hitung last seen
+    // last seen display
     let lastSeenText = '-';
     if (m.last_seen) {
-      const ls = m.last_seen.toDate ? m.last_seen.toDate() : new Date(m.last_seen);
+      const ls   = m.last_seen.toDate ? m.last_seen.toDate() : new Date(m.last_seen);
       const diff = Math.floor((Date.now() - ls.getTime()) / 1000);
       if (diff < 60)        lastSeenText = `${diff}d lalu`;
       else if (diff < 3600) lastSeenText = `${Math.floor(diff/60)}m lalu`;
@@ -210,25 +194,21 @@ function renderMachines(machines) {
       </div>` : ''}
 
       <div style="font-size:11px;color:var(--text3);margin-top:8px">
-        Last seen: <span style="color:${status==='offline'?'var(--red)':'var(--text3)'}">${lastSeenText}</span>
+        Last seen: <span>${lastSeenText}</span>
       </div>
     </div>`;
   }).join('');
 }
 
 function updateStats(machines) {
-  // Gunakan resolveStatus agar stat juga ikut logika timeout
-  const resolved = machines.map(m => resolveStatus(m));
   document.getElementById('statTotal').textContent   = machines.length;
-  document.getElementById('statRunning').textContent = resolved.filter(s=>s==='running').length;
-  document.getElementById('statIdle').textContent    = resolved.filter(s=>s==='idle').length;
-  document.getElementById('statOffline').textContent = resolved.filter(s=>s==='offline'||s==='stopped').length;
+  document.getElementById('statRunning').textContent = machines.filter(m=>m.status==='running').length;
+  document.getElementById('statIdle').textContent    = machines.filter(m=>m.status==='idle').length;
+  document.getElementById('statOffline').textContent = machines.filter(m=>!m.status||m.status==='offline'||m.status==='stopped').length;
 }
 
-// Re-render tiap 30 detik untuk update status offline meski tidak ada event Firestore
+// Re-render tiap 30 detik untuk update last_seen display
 setInterval(() => {
-  // Trigger re-check dengan meminta ulang dari cache onSnapshot
-  // Cara mudah: dispatch custom event untuk re-render dari data terakhir
   window._lastMachines && renderMachines(window._lastMachines) && updateStats(window._lastMachines);
 }, 30000);
 
