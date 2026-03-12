@@ -136,8 +136,8 @@ function startClock() {
 
 const STATUS_COLOR = { running:'#22C55E', idle:'#EAB308', stopped:'#EF4444', offline:'#475569' };
 
-const OFFLINE_THRESHOLD_MS = 10 * 1000; // last_seen > 10 menit → offline (cabut power)
-const IDLE_THRESHOLD_MS    = 10 * 1000; // last_pulse > 15 menit → idle
+const OFFLINE_THRESHOLD_MS = 10*10 * 1000; // last_seen > 10 menit → offline (cabut power)
+const IDLE_THRESHOLD_MS    = 15*10 * 1000; // last_pulse > 15 menit → idle
 
 function resolveStatus(m) {
   // 1. Firestore kirim offline eksplisit (WiFi putus) → offline
