@@ -136,6 +136,32 @@ function startClock() {
 
 const STATUS_COLOR = { running:'#22C55E', idle:'#EAB308', stopped:'#EF4444', offline:'#475569' };
 
+const OFFLINE_THRESHOLD_MS = 10 * 60 * 1000; // last_seen > 10 menit → offline (cabut power)
+const IDLE_THRESHOLD_MS    = 15 * 60 * 1000; // last_pulse > 15 menit → idle
+
+function resolveStatus(m) {
+  // 1. Firestore kirim offline eksplisit (WiFi putus) → offline
+  if (!m.status || m.status === 'offline') return 'offline';
+
+  // 2. Cek last_seen (heartbeat tiap 2 menit)
+  //    Kalau > 10 menit tidak ada → ESP dicabut power → offline
+  if (m.last_seen) {
+    const ls = m.last_seen.toDate ? m.last_seen.toDate() : new Date(m.last_seen);
+    if (Date.now() - ls.getTime() > OFFLINE_THRESHOLD_MS) return 'offline';
+  } else {
+    return 'offline';
+  }
+
+  // 3. Cek last_pulse — kalau > 15 menit tidak ada pulse → idle
+  if (m.last_pulse) {
+    const lp = m.last_pulse.toDate ? m.last_pulse.toDate() : new Date(m.last_pulse);
+    if (Date.now() - lp.getTime() > IDLE_THRESHOLD_MS) return 'idle';
+  }
+
+  // 4. Heartbeat fresh + pulse recent → running
+  return 'running';
+}
+
 function renderMachines(machines) {
   const grid = document.getElementById('machineGrid');
   if (!machines.length) {
@@ -143,7 +169,7 @@ function renderMachines(machines) {
     return;
   }
   grid.innerHTML = machines.map(m => {
-    const status    = m.status || 'offline';
+    const status    = resolveStatus(m);  // pakai resolveStatus, bukan m.status langsung
     const color     = STATUS_COLOR[status] || STATUS_COLOR.offline;
     const count     = m.count  || 0;
     const target    = m.target || 0;
@@ -151,7 +177,7 @@ function renderMachines(machines) {
     const fillColor = pct>=100 ? 'var(--green)' : pct>=60 ? 'var(--orange)' : 'var(--red)';
     const statusLabel = { running:'Running', idle:'Idle', stopped:'Stop', offline:'Offline' };
 
-    // last seen display
+    // last_seen tetap tampil kapan terakhir update, meskipun status sudah offline
     let lastSeenText = '-';
     if (m.last_seen) {
       const ls   = m.last_seen.toDate ? m.last_seen.toDate() : new Date(m.last_seen);
@@ -201,10 +227,11 @@ function renderMachines(machines) {
 }
 
 function updateStats(machines) {
+  const resolved = machines.map(m => resolveStatus(m));
   document.getElementById('statTotal').textContent   = machines.length;
-  document.getElementById('statRunning').textContent = machines.filter(m=>m.status==='running').length;
-  document.getElementById('statIdle').textContent    = machines.filter(m=>m.status==='idle').length;
-  document.getElementById('statOffline').textContent = machines.filter(m=>!m.status||m.status==='offline'||m.status==='stopped').length;
+  document.getElementById('statRunning').textContent = resolved.filter(s=>s==='running').length;
+  document.getElementById('statIdle').textContent    = resolved.filter(s=>s==='idle').length;
+  document.getElementById('statOffline').textContent = resolved.filter(s=>s==='offline'||s==='stopped').length;
 }
 
 // Re-render tiap 30 detik untuk update last_seen display
