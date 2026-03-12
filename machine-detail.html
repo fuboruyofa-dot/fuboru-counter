@@ -185,11 +185,20 @@ async function init() {
   unsubscribe = onSnapshot(doc(db, 'machine_status', machineCode), (snap) => {
     if (!snap.exists()) return;
     const m = { id: snap.id, ...snap.data() };
+    window._lastMachineData = m;
     document.getElementById('topbarTitle').textContent = m.machine_name || machineCode;
     renderHeader(m);
     renderSessionInfo(m);
     renderRing(m);
   });
+
+  // Re-render tiap 15 detik untuk deteksi offline (last_seen timeout)
+  // Firestore tidak berubah saat ESP mati, jadi harus cek secara berkala
+  setInterval(() => {
+    if (window._lastMachineData) {
+      renderHeader(window._lastMachineData);
+    }
+  }, 15000);
 
   await loadRecentSessions();
   await loadChartData();
