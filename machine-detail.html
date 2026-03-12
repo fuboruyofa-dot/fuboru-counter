@@ -195,19 +195,13 @@ async function init() {
   await loadChartData();
 }
 
-const OFFLINE_THRESHOLD_MS = 10 * 60 * 1000;
-const IDLE_THRESHOLD_MS    = 15 * 60 * 1000;
+const OFFLINE_THRESHOLD_MS = 15 * 1000;
 function resolveStatus(m) {
-  if (!m.status || m.status === 'offline') return 'offline';
   if (m.last_seen) {
     const ls = m.last_seen.toDate ? m.last_seen.toDate() : new Date(m.last_seen);
     if (Date.now() - ls.getTime() > OFFLINE_THRESHOLD_MS) return 'offline';
   } else return 'offline';
-  if (m.last_pulse) {
-    const lp = m.last_pulse.toDate ? m.last_pulse.toDate() : new Date(m.last_pulse);
-    if (Date.now() - lp.getTime() > IDLE_THRESHOLD_MS) return 'idle';
-  }
-  return 'running';
+  return m.status || 'offline';
 }
 
 // ── Header ──
