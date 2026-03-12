@@ -136,30 +136,20 @@ function startClock() {
 
 const STATUS_COLOR = { running:'#22C55E', idle:'#EAB308', stopped:'#EF4444', offline:'#475569' };
 
-const OFFLINE_THRESHOLD_MS = 10*10 * 1000; // last_seen > 10 menit → offline (cabut power)
-const IDLE_THRESHOLD_MS    = 15*10 * 1000; // last_pulse > 15 menit → idle
+// Dashboard hanya deteksi offline kalau last_seen > 15 detik (3x missed heartbeat)
+// Status running/idle sudah dikirim langsung dari ESP
+const OFFLINE_THRESHOLD_MS = 15 * 1000;
 
 function resolveStatus(m) {
-  // 1. Firestore kirim offline eksplisit (WiFi putus) → offline
-  if (!m.status || m.status === 'offline') return 'offline';
-
-  // 2. Cek last_seen (heartbeat tiap 2 menit)
-  //    Kalau > 10 menit tidak ada → ESP dicabut power → offline
+  // Cek last_seen — kalau > 15 detik tidak ada heartbeat → ESP mati → offline
   if (m.last_seen) {
     const ls = m.last_seen.toDate ? m.last_seen.toDate() : new Date(m.last_seen);
     if (Date.now() - ls.getTime() > OFFLINE_THRESHOLD_MS) return 'offline';
   } else {
     return 'offline';
   }
-
-  // 3. Cek last_pulse — kalau > 15 menit tidak ada pulse → idle
-  if (m.last_pulse) {
-    const lp = m.last_pulse.toDate ? m.last_pulse.toDate() : new Date(m.last_pulse);
-    if (Date.now() - lp.getTime() > IDLE_THRESHOLD_MS) return 'idle';
-  }
-
-  // 4. Heartbeat fresh + pulse recent → running
-  return 'running';
+  // Heartbeat masih fresh → percaya status dari Firestore (running/idle)
+  return m.status || 'offline';
 }
 
 function renderMachines(machines) {
