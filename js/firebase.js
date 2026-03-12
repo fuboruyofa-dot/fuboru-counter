@@ -110,13 +110,6 @@ function renderSidebar(activeId, userRole) {
   const adminStyle = adminOnly ? '' : 'display:none';
   return `
   <aside class="sidebar" id="appSidebar">
-    <!-- Toggle button -->
-    <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
-      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-      </svg>
-    </button>
-
     <div class="sidebar-brand">
       <div class="logo">F</div>
       <div class="brand-info"><h2>Fuboru Counter</h2><p>Production Monitor</p></div>
@@ -171,16 +164,27 @@ function initSidebar(user) {
   document.getElementById('userAvatar').textContent = (user.full_name || user.email).charAt(0).toUpperCase();
   document.getElementById('logoutBtn').addEventListener('click', logout);
 
-  // Restore collapsed state dari localStorage
-  if (localStorage.getItem('sidebar-collapsed') === '1') {
-    document.body.classList.add('sidebar-collapsed');
-  }
+  // Inject toggle button ke topbar (sebelum h1)
+  const topbar = document.querySelector('.topbar');
+  if (topbar) {
+    const btn = document.createElement('button');
+    btn.className = 'sidebar-toggle';
+    btn.title = 'Toggle sidebar';
+    btn.innerHTML = `<svg class="sidebar-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+    </svg>`;
+    topbar.insertBefore(btn, topbar.firstChild);
 
-  // Toggle handler
-  document.getElementById('sidebarToggle').addEventListener('click', () => {
-    const collapsed = document.body.classList.toggle('sidebar-collapsed');
-    localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0');
-  });
+    // Restore state
+    if (localStorage.getItem('sidebar-collapsed') === '1') {
+      document.body.classList.add('sidebar-collapsed');
+    }
+
+    btn.addEventListener('click', () => {
+      const collapsed = document.body.classList.toggle('sidebar-collapsed');
+      localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '0');
+    });
+  }
 }
 
 export {
