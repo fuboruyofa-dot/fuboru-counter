@@ -224,10 +224,13 @@ function updateStats(machines) {
   document.getElementById('statOffline').textContent = resolved.filter(s=>s==='offline'||s==='stopped').length;
 }
 
-// Re-render tiap 30 detik untuk update last_seen display
+// Re-render tiap 15 detik untuk update last_seen display + offline detection
 setInterval(() => {
-  window._lastMachines && renderMachines(window._lastMachines) && updateStats(window._lastMachines);
-}, 30000);
+  if (window._lastMachines) {
+    renderMachines(window._lastMachines);
+    updateStats(window._lastMachines);
+  }
+}, 15000);
 
 init();
 </script>
