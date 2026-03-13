@@ -2,7 +2,7 @@
 // firebase.js — Firebase config + shared utilities
 // ============================================================
 import { initializeApp }                            from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
-import { getFirestore, doc, collection, getDoc, getDocs,
+import { getFirestore, doc, collection, collectionGroup, getDoc, getDocs,
          setDoc, addDoc, updateDoc, deleteDoc, query,
          where, orderBy, limit, onSnapshot, serverTimestamp,
          Timestamp }                                from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
@@ -194,6 +194,6 @@ export {
   showToast, openModal, closeModal,
   renderSidebar, initSidebar,
   // re-export firestore functions
-  doc, collection, getDoc, getDocs, setDoc, addDoc, updateDoc,
+  doc, collection, collectionGroup, getDoc, getDocs, setDoc, addDoc, updateDoc,
   deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp, Timestamp
 };
