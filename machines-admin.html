@@ -5,15 +5,50 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Kelola Mesin — Fuboru Counter</title>
   <link rel="stylesheet" href="/css/dashboard.css"/>
+  <style>
+    /* ── Modal fix ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: var(--bg2, #1e1e1e);
+      border-radius: 14px;
+      padding: 28px;
+      width: 100%;
+      max-width: 440px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    }
+    .modal-header { display:flex;align-items:center;justify-content:space-between;margin-bottom:20px; }
+    .modal-title  { font-family:'Syne',sans-serif;font-size:16px;font-weight:700; }
+    .modal-close  { background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);line-height:1;padding:4px 8px; }
+    .modal-close:hover { color:var(--text1); }
+    .form-group   { margin-bottom:14px; }
+    .form-group label { display:block;font-size:12px;font-weight:600;margin-bottom:6px;color:var(--text2); }
+    .form-group input { width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;font-size:14px;color:var(--text1); }
+    .form-group input:disabled { opacity:0.5;cursor:not-allowed; }
+  </style>
 </head>
 <body id="pageBody">
 <script type="module">
 import {
   db, requireAdmin, initSidebar, renderSidebar,
-  showToast, openModal, closeModal, formatDate,
-  collection, doc, getDocs, setDoc, updateDoc,
+  showToast, formatDate,
+  collection, doc, getDocs, setDoc, updateDoc, deleteDoc,
   query, orderBy, serverTimestamp
 } from '/js/firebase.js';
+
+/* ── modal helpers ── */
+function openModal(id)  { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+window.openModal  = openModal;
+window.closeModal = closeModal;
 
 async function init() {
   const user = await requireAdmin();
@@ -36,9 +71,14 @@ async function init() {
       </div>
     </div>
   </div>
+
+  <!-- Modal add/edit -->
   <div class="modal-overlay" id="modalMach">
     <div class="modal">
-      <div class="modal-header"><span class="modal-title" id="machTitle">Tambah Mesin</span><button class="modal-close" onclick="closeModal('modalMach')">✕</button></div>
+      <div class="modal-header">
+        <span class="modal-title" id="machTitle">Tambah Mesin</span>
+        <button class="modal-close" onclick="closeModal('modalMach')">✕</button>
+      </div>
       <div class="form-group">
         <label>Kode Mesin</label>
         <input type="text" id="machCode" placeholder="PLONG1" style="text-transform:uppercase"/>
@@ -49,29 +89,50 @@ async function init() {
       <input type="hidden" id="machDocId"/>
       <div style="display:flex;gap:10px;margin-top:20px">
         <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modalMach')">Batal</button>
-        <button class="btn btn-primary" style="flex:1" onclick="saveMach()">Simpan</button>
+        <button class="btn btn-primary"   style="flex:1" onclick="saveMach()">Simpan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal konfirmasi hapus -->
+  <div class="modal-overlay" id="modalDelete">
+    <div class="modal" style="max-width:360px;text-align:center">
+      <div style="font-size:32px;margin-bottom:12px">🗑️</div>
+      <div class="modal-title" style="margin-bottom:8px">Hapus Mesin?</div>
+      <div style="font-size:13px;color:var(--text3);margin-bottom:8px" id="deleteMsg">Data akan dihapus permanen.</div>
+      <div style="font-size:12px;color:var(--red);margin-bottom:20px">⚠ Dokumen machine_status juga akan ikut dihapus.</div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modalDelete')">Batal</button>
+        <button class="btn btn-danger"    style="flex:1" id="confirmDeleteBtn">Hapus</button>
       </div>
     </div>
   </div>`;
+
+  /* close on backdrop click */
+  ['modalMach','modalDelete'].forEach(id => {
+    document.getElementById(id).addEventListener('click', e => {
+      if (e.target === e.currentTarget) closeModal(id);
+    });
+  });
 
   initSidebar(user);
   loadMachines();
 }
 
 window.openAdd = function() {
-  document.getElementById('machTitle').textContent='Tambah Mesin';
-  ['machDocId','machCode','machName','machLoc'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('machCode').disabled=false;
+  document.getElementById('machTitle').textContent   = 'Tambah Mesin';
+  ['machDocId','machCode','machName','machLoc'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('machCode').disabled = false;
   openModal('modalMach');
 };
 
 window.editMach = function(id, data) {
-  document.getElementById('machTitle').textContent='Edit Mesin';
-  document.getElementById('machDocId').value=id;
-  document.getElementById('machCode').value=id;
-  document.getElementById('machCode').disabled=true;
-  document.getElementById('machName').value=data.machine_name;
-  document.getElementById('machLoc').value=data.location||'';
+  document.getElementById('machTitle').textContent   = 'Edit Mesin';
+  document.getElementById('machDocId').value         = id;
+  document.getElementById('machCode').value          = id;
+  document.getElementById('machCode').disabled       = true;
+  document.getElementById('machName').value          = data.machine_name;
+  document.getElementById('machLoc').value           = data.location || '';
   openModal('modalMach');
 };
 
@@ -80,42 +141,66 @@ window.saveMach = async function() {
   const code = document.getElementById('machCode').value.trim().toUpperCase();
   const name = document.getElementById('machName').value.trim();
   const loc  = document.getElementById('machLoc').value.trim();
-  if (!code||!name) { showToast('Kode dan nama wajib diisi','error'); return; }
-
-  if (id) {
-    await updateDoc(doc(db,'machines',id),{machine_name:name, location:loc});
-    await updateDoc(doc(db,'machine_status',id),{machine_name:name, location:loc});
-  } else {
-    await setDoc(doc(db,'machines',code),{ machine_name:name, location:loc, is_active:true, created_at:serverTimestamp() });
-    await setDoc(doc(db,'machine_status',code),{ machine_code:code, machine_name:name, location:loc, status:'offline', count:0, count_raw:0, target:0, layers:1, session_id:null, operator_id:null, operator_name:null, product_id:null, product_name:null, started_at:null, last_seen:null });
-  }
-  showToast(id?'Mesin diupdate!':'Mesin ditambahkan!');
-  closeModal('modalMach'); loadMachines();
+  if (!code || !name) { showToast('Kode dan nama wajib diisi','error'); return; }
+  try {
+    if (id) {
+      await updateDoc(doc(db,'machines',id),        {machine_name:name, location:loc});
+      await updateDoc(doc(db,'machine_status',id),  {machine_name:name, location:loc});
+    } else {
+      await setDoc(doc(db,'machines',code), { machine_name:name, location:loc, is_active:true, created_at:serverTimestamp() });
+      await setDoc(doc(db,'machine_status',code), {
+        machine_code:code, machine_name:name, location:loc,
+        status:'offline', count:0, count_raw:0, target:0, layers:1,
+        session_id:null, operator_id:null, operator_name:null,
+        product_id:null, product_name:null, started_at:null, last_seen:null
+      });
+    }
+    showToast(id ? 'Mesin diupdate!' : 'Mesin ditambahkan!');
+    closeModal('modalMach'); loadMachines();
+  } catch(e) { showToast(e.message,'error'); }
 };
 
 window.toggleMach = async function(id, active) {
-  await updateDoc(doc(db,'machines',id),{is_active:!active});
-  showToast(!active?'Mesin diaktifkan':'Mesin dinonaktifkan');
+  await updateDoc(doc(db,'machines',id), {is_active:!active});
+  showToast(!active ? 'Mesin diaktifkan' : 'Mesin dinonaktifkan');
   loadMachines();
 };
 
+window.confirmDelete = function(id, name) {
+  document.getElementById('deleteMsg').textContent = `"${name}" (${id}) akan dihapus permanen dan tidak bisa dikembalikan.`;
+  const btn = document.getElementById('confirmDeleteBtn');
+  btn.onclick = async () => {
+    try {
+      await deleteDoc(doc(db,'machines',id));
+      await deleteDoc(doc(db,'machine_status',id));
+      showToast(`Mesin "${name}" dihapus`);
+      closeModal('modalDelete'); loadMachines();
+    } catch(e) { showToast(e.message,'error'); }
+  };
+  openModal('modalDelete');
+};
+
 async function loadMachines() {
-  const snap = await getDocs(query(collection(db,'machines'), orderBy('machine_name')));
-  document.getElementById('machCount').textContent=`${snap.docs.length}/30 mesin`;
-  const tbody=document.getElementById('machBody');
-  if (snap.empty) { tbody.innerHTML=`<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text3)">Belum ada mesin</td></tr>`; return; }
-  tbody.innerHTML=snap.docs.map(d=>{
-    const m={id:d.id,...d.data()};
+  const snap  = await getDocs(query(collection(db,'machines'), orderBy('machine_name')));
+  document.getElementById('machCount').textContent = `${snap.docs.length}/30 mesin`;
+  const tbody = document.getElementById('machBody');
+  if (snap.empty) { tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text3)">Belum ada mesin</td></tr>`; return; }
+  tbody.innerHTML = snap.docs.map(d => {
+    const m = {id:d.id, ...d.data()};
+    const dataAttr = JSON.stringify(m).replace(/"/g,'&quot;');
     return `<tr>
       <td><code style="color:var(--orange);font-size:12px;background:var(--bg3);padding:3px 8px;border-radius:5px">${m.id}</code></td>
       <td class="name">${m.machine_name}</td>
       <td style="color:var(--text3)">${m.location||'-'}</td>
-      <td>${m.is_active?'<span class="badge badge-green">Aktif</span>':'<span class="badge badge-gray">Nonaktif</span>'}</td>
+      <td>${m.is_active ? '<span class="badge badge-green">Aktif</span>' : '<span class="badge badge-gray">Nonaktif</span>'}</td>
       <td style="font-size:12px;color:var(--text3)">${formatDate(m.created_at)}</td>
-      <td><div style="display:flex;gap:6px">
-        <button class="btn btn-secondary btn-sm" onclick="editMach('${m.id}',${JSON.stringify(m).replace(/"/g,'&quot;')})">Edit</button>
-        <button class="btn btn-${m.is_active?'danger':'secondary'} btn-sm" onclick="toggleMach('${m.id}',${m.is_active})">${m.is_active?'Nonaktifkan':'Aktifkan'}</button>
-      </div></td>
+      <td>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-secondary btn-sm" onclick="editMach('${m.id}',${dataAttr})">Edit</button>
+          <button class="btn btn-${m.is_active?'secondary':'secondary'} btn-sm" onclick="toggleMach('${m.id}',${m.is_active})">${m.is_active?'Nonaktifkan':'Aktifkan'}</button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDelete('${m.id}','${m.machine_name}')">Hapus</button>
+        </div>
+      </td>
     </tr>`;
   }).join('');
 }
