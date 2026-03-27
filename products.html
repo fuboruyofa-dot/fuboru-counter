@@ -1,20 +1,53 @@
-<!-- products.html -->
 <!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Produk & Target — Fuboru Counter</title>
+  <title>Produk &amp; Target — Fuboru Counter</title>
   <link rel="stylesheet" href="/css/dashboard.css"/>
+  <style>
+    /* ── Modal fix ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: var(--bg2, #1e1e1e);
+      border-radius: 14px;
+      padding: 28px;
+      width: 100%;
+      max-width: 440px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    }
+    .modal-header { display:flex;align-items:center;justify-content:space-between;margin-bottom:20px; }
+    .modal-title  { font-family:'Syne',sans-serif;font-size:16px;font-weight:700; }
+    .modal-close  { background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);line-height:1;padding:4px 8px; }
+    .modal-close:hover { color:var(--text1); }
+    .form-group   { margin-bottom:14px; }
+    .form-group label { display:block;font-size:12px;font-weight:600;margin-bottom:6px;color:var(--text2); }
+    .form-group input { width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;font-size:14px;color:var(--text1); }
+  </style>
 </head>
 <body id="pageBody">
 <script type="module">
 import {
   db, requireAdmin, initSidebar, renderSidebar,
-  showToast, openModal, closeModal, formatDate,
-  collection, doc, getDocs, addDoc, updateDoc,
+  showToast, formatDate,
+  collection, doc, getDocs, addDoc, updateDoc, deleteDoc,
   query, orderBy, serverTimestamp
 } from '/js/firebase.js';
+
+/* ── modal helpers ── */
+function openModal(id)  { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+window.openModal  = openModal;
+window.closeModal = closeModal;
 
 async function init() {
   const user = await requireAdmin();
@@ -22,7 +55,7 @@ async function init() {
   ${renderSidebar('products', user.role)}
   <div class="main">
     <div class="topbar">
-      <h1>Produk & Target</h1>
+      <h1>Produk &amp; Target</h1>
       <div class="topbar-actions">
         <button class="btn btn-primary" onclick="openAdd()">+ Tambah Produk</button>
       </div>
@@ -36,37 +69,62 @@ async function init() {
       </div>
     </div>
   </div>
+
+  <!-- Modal add/edit -->
   <div class="modal-overlay" id="modalProd">
     <div class="modal">
-      <div class="modal-header"><span class="modal-title" id="prodModalTitle">Tambah Produk</span><button class="modal-close" onclick="closeModal('modalProd')">✕</button></div>
+      <div class="modal-header">
+        <span class="modal-title" id="prodModalTitle">Tambah Produk</span>
+        <button class="modal-close" onclick="closeModal('modalProd')">✕</button>
+      </div>
       <div class="form-group"><label>Nama Produk</label><input type="text" id="prodName" placeholder="Nama produk"/></div>
       <div class="form-group"><label>Target per Sesi</label><input type="number" id="prodTarget" placeholder="200" min="1"/></div>
       <div class="form-group"><label>Deskripsi (opsional)</label><input type="text" id="prodDesc" placeholder="Keterangan produk"/></div>
       <input type="hidden" id="prodDocId"/>
       <div style="display:flex;gap:10px;margin-top:20px">
         <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modalProd')">Batal</button>
-        <button class="btn btn-primary" style="flex:1" onclick="saveProd()">Simpan</button>
+        <button class="btn btn-primary"   style="flex:1" onclick="saveProd()">Simpan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal konfirmasi hapus -->
+  <div class="modal-overlay" id="modalDelete">
+    <div class="modal" style="max-width:360px;text-align:center">
+      <div style="font-size:32px;margin-bottom:12px">🗑️</div>
+      <div class="modal-title" style="margin-bottom:8px">Hapus Produk?</div>
+      <div style="font-size:13px;color:var(--text3);margin-bottom:20px" id="deleteMsg">Data akan dihapus permanen.</div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modalDelete')">Batal</button>
+        <button class="btn btn-danger"    style="flex:1" id="confirmDeleteBtn">Hapus</button>
       </div>
     </div>
   </div>`;
+
+  /* close on backdrop click */
+  ['modalProd','modalDelete'].forEach(id => {
+    document.getElementById(id).addEventListener('click', e => {
+      if (e.target === e.currentTarget) closeModal(id);
+    });
+  });
 
   initSidebar(user);
   loadProducts();
 }
 
 window.openAdd = function() {
-  document.getElementById('prodModalTitle').textContent='Tambah Produk';
-  ['prodDocId','prodName','prodDesc'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('prodTarget').value='';
+  document.getElementById('prodModalTitle').textContent = 'Tambah Produk';
+  ['prodDocId','prodName','prodDesc'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('prodTarget').value = '';
   openModal('modalProd');
 };
 
 window.editProd = function(id, data) {
-  document.getElementById('prodModalTitle').textContent='Edit Produk';
-  document.getElementById('prodDocId').value=id;
-  document.getElementById('prodName').value=data.name;
-  document.getElementById('prodTarget').value=data.target;
-  document.getElementById('prodDesc').value=data.description||'';
+  document.getElementById('prodModalTitle').textContent = 'Edit Produk';
+  document.getElementById('prodDocId').value   = id;
+  document.getElementById('prodName').value    = data.name;
+  document.getElementById('prodTarget').value  = data.target;
+  document.getElementById('prodDesc').value    = data.description || '';
   openModal('modalProd');
 };
 
@@ -77,35 +135,54 @@ window.saveProd = async function() {
   const desc   = document.getElementById('prodDesc').value.trim();
   if (!name || !target) { showToast('Nama dan target wajib diisi','error'); return; }
   const body = { name, target, description:desc };
-  if (id) await updateDoc(doc(db,'products',id), body);
-  else    await addDoc(collection(db,'products'), {...body, is_active:true, created_at:serverTimestamp()});
-  showToast(id?'Produk diupdate!':'Produk ditambahkan!');
-  closeModal('modalProd'); loadProducts();
+  try {
+    if (id) await updateDoc(doc(db,'products',id), body);
+    else    await addDoc(collection(db,'products'), {...body, is_active:true, created_at:serverTimestamp()});
+    showToast(id ? 'Produk diupdate!' : 'Produk ditambahkan!');
+    closeModal('modalProd'); loadProducts();
+  } catch(e) { showToast(e.message,'error'); }
 };
 
 window.toggleProd = async function(id, active) {
   await updateDoc(doc(db,'products',id), {is_active:!active});
-  showToast(!active?'Produk diaktifkan':'Produk dinonaktifkan');
+  showToast(!active ? 'Produk diaktifkan' : 'Produk dinonaktifkan');
   loadProducts();
 };
 
+window.confirmDelete = function(id, name) {
+  document.getElementById('deleteMsg').textContent = `"${name}" akan dihapus permanen dan tidak bisa dikembalikan.`;
+  const btn = document.getElementById('confirmDeleteBtn');
+  btn.onclick = async () => {
+    try {
+      await deleteDoc(doc(db,'products',id));
+      showToast(`Produk "${name}" dihapus`);
+      closeModal('modalDelete'); loadProducts();
+    } catch(e) { showToast(e.message,'error'); }
+  };
+  openModal('modalDelete');
+};
+
 async function loadProducts() {
-  const snap = await getDocs(query(collection(db,'products'), orderBy('name')));
+  const snap  = await getDocs(query(collection(db,'products'), orderBy('name')));
   const tbody = document.getElementById('prodBody');
-  if (snap.empty) { tbody.innerHTML=`<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Belum ada produk</td></tr>`; return; }
+  if (snap.empty) { tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Belum ada produk</td></tr>`; return; }
   tbody.innerHTML = snap.docs.map((d,i) => {
-    const p={id:d.id,...d.data()};
+    const p = {id:d.id, ...d.data()};
+    const dataAttr = JSON.stringify(p).replace(/"/g,'&quot;');
     return `<tr>
       <td style="color:var(--text3)">${i+1}</td>
       <td class="name">${p.name}</td>
       <td><span style="font-family:'Syne',sans-serif;font-weight:700;color:var(--orange)">${p.target}</span> pcs</td>
       <td style="color:var(--text3)">${p.description||'-'}</td>
-      <td>${p.is_active?'<span class="badge badge-green">Aktif</span>':'<span class="badge badge-gray">Nonaktif</span>'}</td>
+      <td>${p.is_active ? '<span class="badge badge-green">Aktif</span>' : '<span class="badge badge-gray">Nonaktif</span>'}</td>
       <td style="font-size:12px;color:var(--text3)">${formatDate(p.created_at)}</td>
-      <td><div style="display:flex;gap:6px">
-        <button class="btn btn-secondary btn-sm" onclick="editProd('${p.id}',${JSON.stringify(p).replace(/"/g,'&quot;')})">Edit</button>
-        <button class="btn btn-${p.is_active?'danger':'secondary'} btn-sm" onclick="toggleProd('${p.id}',${p.is_active})">${p.is_active?'Nonaktifkan':'Aktifkan'}</button>
-      </div></td>
+      <td>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-secondary btn-sm" onclick="editProd('${p.id}',${dataAttr})">Edit</button>
+          <button class="btn btn-${p.is_active?'secondary':'secondary'} btn-sm" onclick="toggleProd('${p.id}',${p.is_active})">${p.is_active?'Nonaktifkan':'Aktifkan'}</button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDelete('${p.id}','${p.name}')">Hapus</button>
+        </div>
+      </td>
     </tr>`;
   }).join('');
 }
