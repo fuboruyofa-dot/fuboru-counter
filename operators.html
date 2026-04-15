@@ -3,23 +3,75 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Operator & RFID — Fuboru Counter</title>
+  <title>Operator &amp; RFID — Fuboru Counter</title>
   <link rel="stylesheet" href="/css/dashboard.css"/>
   <style>
-    .scan-zone { background:var(--bg3);border:2px dashed var(--border2);border-radius:14px;padding:32px;text-align:center;transition:all 0.3s;margin-bottom:20px;cursor:pointer; }
-    .scan-zone.listening { border-color:var(--orange);background:var(--orange-dim);animation:scanPulse 1.5s ease-in-out infinite; }
-    .scan-zone.got-uid   { border-color:var(--green);background:rgba(34,197,94,0.08);animation:none; }
-    @keyframes scanPulse { 0%,100%{box-shadow:0 0 0 0 rgba(249,115,22,0.3)}50%{box-shadow:0 0 0 12px rgba(249,115,22,0)} }
-    .scan-title { font-family:'Syne',sans-serif;font-size:15px;font-weight:600;margin-bottom:6px; }
-    .scan-sub   { font-size:13px;color:var(--text3); }
-    .uid-display { display:inline-block;background:var(--bg2);border:1px solid var(--green);border-radius:8px;padding:8px 20px;font-family:monospace;font-size:18px;font-weight:700;color:var(--green);letter-spacing:2px;margin-top:12px; }
-    .mqtt-status { display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:4px 10px;border-radius:20px; }
-    .mqtt-status.connected    { background:rgba(34,197,94,0.12);color:var(--green); }
-    .mqtt-status.disconnected { background:rgba(239,68,68,0.12);color:var(--red); }
-    .mqtt-status.connecting   { background:rgba(249,115,22,0.12);color:var(--orange); }
-    .mqtt-dot { width:6px;height:6px;border-radius:50%;background:currentColor; }
+    /* ── Scan zone ── */
+    .scan-zone {
+      background: var(--bg3);
+      border: 2px dashed var(--border2);
+      border-radius: 14px;
+      padding: 32px;
+      text-align: center;
+      transition: all 0.3s;
+      margin-bottom: 20px;
+      cursor: pointer;
+    }
+    .scan-zone.listening { border-color: var(--orange); background: var(--orange-dim); animation: scanPulse 1.5s ease-in-out infinite; }
+    .scan-zone.got-uid   { border-color: var(--green); background: rgba(34,197,94,0.08); animation: none; }
+    @keyframes scanPulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(249,115,22,0.3) }
+      50%     { box-shadow: 0 0 0 12px rgba(249,115,22,0) }
+    }
+    .scan-title { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+    .scan-sub   { font-size: 13px; color: var(--text3); }
+    .uid-display {
+      display: inline-block;
+      background: var(--bg2);
+      border: 1px solid var(--green);
+      border-radius: 8px;
+      padding: 8px 20px;
+      font-family: monospace;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--green);
+      letter-spacing: 2px;
+      margin-top: 12px;
+    }
+    .mqtt-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border-radius: 20px; }
+    .mqtt-status.connected    { background: rgba(34,197,94,0.12); color: var(--green); }
+    .mqtt-status.disconnected { background: rgba(239,68,68,0.12); color: var(--red); }
+    .mqtt-status.connecting   { background: rgba(249,115,22,0.12); color: var(--orange); }
+    .mqtt-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
-    /* ── Modal fix ── */
+    /* ── [v10] Register-mode banner ── */
+    .reg-banner {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      background: rgba(249,115,22,0.12);
+      border: 1px solid var(--orange);
+      border-radius: 10px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: var(--orange);
+    }
+    .reg-banner.active { display: flex; }
+    .reg-banner svg { flex-shrink: 0; }
+    .reg-banner-txt { flex: 1; font-weight: 600; }
+    .reg-banner-btn {
+      background: var(--orange);
+      color: #fff;
+      border: none;
+      border-radius: 7px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    /* ── Modal ── */
     .modal-overlay {
       display: none;
       position: fixed;
@@ -38,13 +90,22 @@
       max-width: 440px;
       box-shadow: 0 20px 60px rgba(0,0,0,0.4);
     }
-    .modal-header { display:flex;align-items:center;justify-content:space-between;margin-bottom:20px; }
-    .modal-title  { font-family:'Syne',sans-serif;font-size:16px;font-weight:700; }
-    .modal-close  { background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);line-height:1;padding:4px 8px; }
-    .modal-close:hover { color:var(--text1); }
-    .form-group   { margin-bottom:14px; }
-    .form-group label { display:block;font-size:12px;font-weight:600;margin-bottom:6px;color:var(--text2); }
-    .form-group input { width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;font-size:14px;color:var(--text1); }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+    .modal-title  { font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 700; }
+    .modal-close  { background: none; border: none; cursor: pointer; font-size: 18px; color: var(--text3); line-height: 1; padding: 4px 8px; }
+    .modal-close:hover { color: var(--text1); }
+    .form-group   { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--text2); }
+    .form-group input { width: 100%; box-sizing: border-box; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 10px 12px; font-size: 14px; color: var(--text1); }
+
+    /* [v10] UID field dalam modal scan — animasi pulse saat menunggu */
+    .uid-waiting {
+      animation: uidPulse 1.2s ease-in-out infinite;
+    }
+    @keyframes uidPulse {
+      0%,100% { opacity: 1; }
+      50%     { opacity: 0.4; }
+    }
   </style>
 </head>
 <body id="pageBody">
@@ -52,20 +113,23 @@
 import {
   db, requireAdmin, initSidebar, renderSidebar,
   showToast, formatDate,
-  collection, doc, getDocs, addDoc, updateDoc, deleteDoc,
+  collection, doc, getDocs, addDoc, updateDoc, deleteDoc, getDoc, onSnapshot,
   query, orderBy, where, serverTimestamp
 } from '/js/firebase.js';
 
-/* ── simple modal helpers (replaces imported openModal/closeModal) ── */
+/* ── Modal helpers ── */
 function openModal(id)  { document.getElementById(id).classList.add('active'); }
 function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 window.openModal  = openModal;
 window.closeModal = closeModal;
 
-let scannedUID = '';
-let scanMode   = false;
-let mqttClient = null;
+let scannedUID      = '';
+let scanMode        = false;
+let mqttClient      = null;
+let registerModeOn  = false;   // [v10] apakah ESP32 sedang di mode daftar kartu baru
+let rfidPendingUnsub = null;   // [v10] unsubscribe listener rfid_pending
 
+/* ─────────────────────────────────────────────────────────── */
 async function init() {
   const user = await requireAdmin();
   document.getElementById('pageBody').innerHTML = `
@@ -79,14 +143,40 @@ async function init() {
       </div>
     </div>
     <div class="page-content">
+
+      <!-- [v10] Banner register mode aktif -->
+      <div class="reg-banner" id="regBanner">
+        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18"/>
+        </svg>
+        <span class="reg-banner-txt">⟳ Alat dalam mode scan kartu baru — menunggu kartu ditempelkan...</span>
+        <button class="reg-banner-btn" onclick="exitRegisterMode()">Batalkan</button>
+      </div>
+
+      <!-- Scan zone (mode manual/MQTT dari browser — sama seperti v9) -->
       <div class="scan-zone" id="scanZone" onclick="toggleScan()">
         <div id="scanIcon" style="margin-bottom:12px">
-          <svg width="36" height="36" fill="none" stroke="var(--text3)" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18"/></svg>
+          <svg width="36" height="36" fill="none" stroke="var(--text3)" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18"/>
+          </svg>
         </div>
         <div class="scan-title" id="scanTitle">Klik untuk Aktifkan Mode Scan RFID</div>
         <div class="scan-sub" id="scanSub">Pastikan firmware rfid_reader sudah aktif di ESP32</div>
         <div class="uid-display" id="uidDisplay" style="display:none">-</div>
       </div>
+
+      <!-- Tombol [v10]: aktifkan register mode di alat fisik -->
+      <div style="margin-bottom:20px;text-align:center">
+        <button class="btn btn-secondary" id="btnRegisterMode" onclick="activateRegisterMode()">
+          📡 Aktifkan Scan Kartu di Alat (ESP32)
+        </button>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">
+          LCD alat akan tampil "Scan kartu baru anda" — tempelkan kartu ke reader fisik
+        </div>
+      </div>
+
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:600">Daftar Operator</div>
         <div style="font-size:12px;color:var(--text3)" id="opCount"></div>
@@ -100,12 +190,12 @@ async function init() {
     </div>
   </div>
 
-  <!-- Modal scan -->
+  <!-- Modal scan RFID via MQTT (sama seperti v9) -->
   <div class="modal-overlay" id="modalScan">
     <div class="modal">
       <div class="modal-header">
         <span class="modal-title">Daftarkan Operator</span>
-        <button class="modal-close" onclick="closeModal('modalScan')">✕</button>
+        <button class="modal-close" onclick="cancelScanModal()">✕</button>
       </div>
       <div style="background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:20px;text-align:center">
         <div style="font-size:11px;color:var(--text3);margin-bottom:6px">UID Kartu RFID</div>
@@ -114,13 +204,54 @@ async function init() {
       <div class="form-group"><label>Nama Lengkap</label><input type="text" id="scanName" placeholder="Nama operator"/></div>
       <div class="form-group"><label>Departemen (opsional)</label><input type="text" id="scanDept" placeholder="Area Produksi"/></div>
       <div style="display:flex;gap:10px;margin-top:20px">
-        <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modalScan')">Batal</button>
+        <button class="btn btn-secondary" style="flex:1" onclick="cancelScanModal()">Batal</button>
         <button class="btn btn-primary"   style="flex:1" onclick="saveScanOp()">Simpan</button>
       </div>
     </div>
   </div>
 
-  <!-- Modal manual add/edit -->
+  <!-- [v10] Modal scan kartu fisik via ESP32 reader -->
+  <div class="modal-overlay" id="modalPhysicalScan">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Scan Kartu via Alat</span>
+        <button class="modal-close" onclick="cancelPhysicalScan()">✕</button>
+      </div>
+
+      <!-- Langkah 1: menunggu UID -->
+      <div id="phasePending">
+        <div style="text-align:center;padding:20px 0">
+          <div style="font-size:40px;margin-bottom:12px">📡</div>
+          <div class="uid-display uid-waiting" id="physUidDisplay">Menunggu kartu...</div>
+          <div style="font-size:12px;color:var(--text3);margin-top:10px">
+            Tempelkan kartu RFID ke reader di alat ESP32
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">
+            LCD alat: <code>"Scan kartu baru anda"</code>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:10px">
+          <button class="btn btn-secondary" style="flex:1" onclick="cancelPhysicalScan()">Batal</button>
+        </div>
+      </div>
+
+      <!-- Langkah 2: UID sudah dapat, isi nama -->
+      <div id="phaseForm" style="display:none">
+        <div style="background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:20px;text-align:center">
+          <div style="font-size:11px;color:var(--text3);margin-bottom:6px">UID Kartu Terbaca</div>
+          <div style="font-family:monospace;font-size:22px;font-weight:700;color:var(--green);letter-spacing:3px" id="physUidFinal">-</div>
+        </div>
+        <div class="form-group"><label>Nama Lengkap</label><input type="text" id="physName" placeholder="Nama operator"/></div>
+        <div class="form-group"><label>Departemen (opsional)</label><input type="text" id="physDept" placeholder="Area Produksi"/></div>
+        <div style="display:flex;gap:10px;margin-top:20px">
+          <button class="btn btn-secondary" style="flex:1" onclick="cancelPhysicalScan()">Batal</button>
+          <button class="btn btn-primary"   style="flex:1" onclick="savePhysicalScan()">Simpan</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal manual add/edit (tidak berubah) -->
   <div class="modal-overlay" id="modalManual">
     <div class="modal">
       <div class="modal-header">
@@ -138,7 +269,7 @@ async function init() {
     </div>
   </div>
 
-  <!-- Modal konfirmasi hapus -->
+  <!-- Modal konfirmasi hapus (tidak berubah) -->
   <div class="modal-overlay" id="modalDelete">
     <div class="modal" style="max-width:360px;text-align:center">
       <div style="font-size:32px;margin-bottom:12px">🗑️</div>
@@ -151,10 +282,14 @@ async function init() {
     </div>
   </div>`;
 
-  /* close modal when clicking backdrop */
-  ['modalScan','modalManual','modalDelete'].forEach(id => {
+  /* close modal saat klik backdrop */
+  ['modalScan','modalManual','modalDelete','modalPhysicalScan'].forEach(id => {
     document.getElementById(id).addEventListener('click', e => {
-      if (e.target === e.currentTarget) closeModal(id);
+      if (e.target === e.currentTarget) {
+        if (id === 'modalPhysicalScan') { cancelPhysicalScan(); return; }
+        if (id === 'modalScan') { cancelScanModal(); return; }
+        closeModal(id);
+      }
     });
   });
 
@@ -163,25 +298,41 @@ async function init() {
   connectMQTT();
 }
 
-/* ── MQTT ── */
+/* ═══════════════════════════════════════════════════════════
+   MQTT (tidak berubah dari v9)
+═══════════════════════════════════════════════════════════ */
 function connectMQTT() {
   const host = window.location.hostname;
-  mqttClient = mqtt.connect(`ws://${host}:9001`, { clientId:'dash_reg_'+Math.random().toString(16).substr(2,6), reconnectPeriod:3000 });
-  mqttClient.on('connect',   () => { setMqtt('connected','MQTT Terhubung'); mqttClient.subscribe('fuboru/registration/rfid'); });
-  mqttClient.on('error',     () => setMqtt('disconnected','MQTT Error'));
-  mqttClient.on('offline',   () => setMqtt('disconnected','MQTT Offline'));
-  mqttClient.on('reconnect', () => setMqtt('connecting','Reconnecting...'));
-  mqttClient.on('message', (t,m) => {
-    if (t !== 'fuboru/registration/rfid' || !scanMode) return;
-    try { const d = JSON.parse(m.toString()); if (d.uid) onUID(d.uid); } catch(e){}
+  mqttClient = mqtt.connect(`ws://${host}:9001`, {
+    clientId: 'dash_reg_' + Math.random().toString(16).substr(2, 6),
+    reconnectPeriod: 3000
+  });
+  mqttClient.on('connect', () => {
+    setMqtt('connected', 'MQTT Terhubung');
+    mqttClient.subscribe('fuboru/registration/rfid');
+  });
+  mqttClient.on('error',     () => setMqtt('disconnected', 'MQTT Error'));
+  mqttClient.on('offline',   () => setMqtt('disconnected', 'MQTT Offline'));
+  mqttClient.on('reconnect', () => setMqtt('connecting', 'Reconnecting...'));
+  mqttClient.on('message', (t, m) => {
+    if (t !== 'fuboru/registration/rfid') return;
+    try {
+      const d = JSON.parse(m.toString());
+      if (d.uid) {
+        if (scanMode) onUID(d.uid);           // mode scan manual via zona klik
+        // mode physical scan ditangani oleh Firestore listener (lihat bawah)
+      }
+    } catch(e) {}
   });
 }
-function setMqtt(s,t) {
+function setMqtt(s, t) {
   document.getElementById('mqttStatus').className = `mqtt-status ${s}`;
   document.getElementById('mqttTxt').textContent  = t;
 }
 
-/* ── Scan zone ── */
+/* ═══════════════════════════════════════════════════════════
+   Scan zone (tidak berubah dari v9)
+═══════════════════════════════════════════════════════════ */
 window.toggleScan = function() {
   const zone = document.getElementById('scanZone');
   if (zone.classList.contains('got-uid')) { resetScan(); return; }
@@ -205,40 +356,166 @@ function onUID(uid) {
 }
 
 async function checkUID(uid) {
-  const q    = query(collection(db,'operators'), where('rfid_uid','==',uid), where('is_active','==',true));
+  const q    = query(collection(db, 'operators'), where('rfid_uid', '==', uid), where('is_active', '==', true));
   const snap = await getDocs(q);
   if (!snap.empty) { showToast(`UID sudah terdaftar: ${snap.docs[0].data().full_name}`, 'error'); return; }
-  document.getElementById('modalUid').textContent  = uid;
-  document.getElementById('scanName').value        = '';
-  document.getElementById('scanDept').value        = '';
+  document.getElementById('modalUid').textContent = uid;
+  document.getElementById('scanName').value       = '';
+  document.getElementById('scanDept').value       = '';
   openModal('modalScan');
   setTimeout(() => document.getElementById('scanName').focus(), 300);
 }
 
+window.cancelScanModal = function() {
+  closeModal('modalScan');
+  resetScan();
+};
+
 window.saveScanOp = async function() {
   const name = document.getElementById('scanName').value.trim();
   const dept = document.getElementById('scanDept').value.trim();
-  if (!name) { showToast('Nama wajib diisi','error'); return; }
+  if (!name) { showToast('Nama wajib diisi', 'error'); return; }
   try {
-    await addDoc(collection(db,'operators'), { full_name:name, rfid_uid:scannedUID, department:dept, is_active:true, created_at:serverTimestamp() });
+    await addDoc(collection(db, 'operators'), {
+      full_name: name, rfid_uid: scannedUID, department: dept,
+      is_active: true, created_at: serverTimestamp()
+    });
     showToast(`Operator "${name}" didaftarkan!`);
     closeModal('modalScan'); resetScan(); loadOperators();
-  } catch(e) { showToast(e.message,'error'); }
+  } catch(e) { showToast(e.message, 'error'); }
 };
 
 function resetScan() {
   scanMode = false;
   const zone = document.getElementById('scanZone');
-  zone.classList.remove('listening','got-uid');
-  document.getElementById('scanTitle').textContent       = 'Klik untuk Aktifkan Mode Scan RFID';
-  document.getElementById('scanSub').textContent         = 'Pastikan firmware rfid_reader sudah aktif di ESP32';
-  document.getElementById('uidDisplay').style.display    = 'none';
+  zone.classList.remove('listening', 'got-uid');
+  document.getElementById('scanTitle').textContent    = 'Klik untuk Aktifkan Mode Scan RFID';
+  document.getElementById('scanSub').textContent      = 'Pastikan firmware rfid_reader sudah aktif di ESP32';
+  document.getElementById('uidDisplay').style.display = 'none';
 }
 
-/* ── Manual modal ── */
+/* ═══════════════════════════════════════════════════════════
+   [v10] REGISTER MODE — Kirim perintah ke ESP32 via Firestore
+   rfid_cmd/KEMAS  { register_mode: true/false }
+   ESP32 poll dokumen ini tiap 2 detik
+═══════════════════════════════════════════════════════════ */
+
+window.activateRegisterMode = async function() {
+  if (registerModeOn) return;
+
+  // Kirim perintah register_mode = true ke ESP32
+  try {
+    await setDoc_compat(doc(db, 'rfid_cmd', 'KEMAS'), { register_mode: true }, { merge: true });
+  } catch(e) {
+    // Fallback: pakai updateDoc / addDoc jika setDoc tidak tersedia
+    try {
+      await updateDoc(doc(db, 'rfid_cmd', 'KEMAS'), { register_mode: true });
+    } catch(_) {
+      await addDoc_compat(doc(db, 'rfid_cmd', 'KEMAS'), { register_mode: true });
+    }
+  }
+
+  registerModeOn = true;
+  document.getElementById('regBanner').classList.add('active');
+  document.getElementById('btnRegisterMode').disabled = true;
+
+  // Tampilkan modal menunggu UID dari alat
+  document.getElementById('phasePending').style.display = 'block';
+  document.getElementById('phaseForm').style.display    = 'none';
+  document.getElementById('physUidDisplay').textContent = 'Menunggu kartu...';
+  document.getElementById('physUidDisplay').classList.add('uid-waiting');
+  openModal('modalPhysicalScan');
+
+  // Dengarkan Firestore rfid_pending/KEMAS untuk UID baru dari alat
+  listenForPhysicalUID();
+};
+
+function listenForPhysicalUID() {
+  // Hapus listener sebelumnya jika ada
+  if (rfidPendingUnsub) { rfidPendingUnsub(); rfidPendingUnsub = null; }
+
+  rfidPendingUnsub = onSnapshot(doc(db, 'rfid_pending', 'KEMAS'), async snap => {
+    if (!snap.exists()) return;
+    const data = snap.data();
+    const uid  = data.uid || '';
+    if (!uid || uid === lastPhysicalUid) return;
+    lastPhysicalUid = uid;
+
+    // Cek apakah UID sudah terdaftar
+    const q    = query(collection(db, 'operators'), where('rfid_uid', '==', uid), where('is_active', '==', true));
+    const existing = await getDocs(q);
+    if (!existing.empty) {
+      showToast(`UID sudah terdaftar: ${existing.docs[0].data().full_name}`, 'error');
+      // Tetap di fase pending agar bisa scan kartu lain
+      return;
+    }
+
+    // UID baru → pindah ke fase form
+    document.getElementById('physUidDisplay').textContent = uid;
+    document.getElementById('physUidDisplay').classList.remove('uid-waiting');
+    document.getElementById('phasePending').style.display = 'none';
+    document.getElementById('phaseForm').style.display    = 'block';
+    document.getElementById('physUidFinal').textContent   = uid;
+    document.getElementById('physName').value             = '';
+    document.getElementById('physDept').value             = '';
+    setTimeout(() => document.getElementById('physName').focus(), 200);
+  });
+}
+
+let lastPhysicalUid = '';
+
+window.savePhysicalScan = async function() {
+  const name = document.getElementById('physName').value.trim();
+  const dept = document.getElementById('physDept').value.trim();
+  const uid  = document.getElementById('physUidFinal').textContent;
+  if (!name) { showToast('Nama wajib diisi', 'error'); return; }
+  try {
+    await addDoc(collection(db, 'operators'), {
+      full_name: name, rfid_uid: uid, department: dept,
+      is_active: true, created_at: serverTimestamp()
+    });
+    showToast(`Operator "${name}" berhasil didaftarkan!`);
+    await exitRegisterMode();
+    closeModal('modalPhysicalScan');
+    lastPhysicalUid = '';
+    loadOperators();
+  } catch(e) { showToast(e.message, 'error'); }
+};
+
+window.cancelPhysicalScan = async function() {
+  closeModal('modalPhysicalScan');
+  await exitRegisterMode();
+  lastPhysicalUid = '';
+};
+
+window.exitRegisterMode = async function() {
+  if (rfidPendingUnsub) { rfidPendingUnsub(); rfidPendingUnsub = null; }
+  registerModeOn = false;
+  document.getElementById('regBanner').classList.remove('active');
+  document.getElementById('btnRegisterMode').disabled = false;
+
+  // Kirim perintah register_mode = false ke ESP32
+  try {
+    await updateDoc(doc(db, 'rfid_cmd', 'KEMAS'), { register_mode: false });
+  } catch(_) {}
+};
+
+// Helper: setDoc dengan merge (Firebase v9 modular)
+async function setDoc_compat(docRef, data, opts) {
+  const { setDoc } = await import('https://www.gstatic.com/firebasejs/10.0.0/firebase-firestore.js');
+  return setDoc(docRef, data, opts);
+}
+async function addDoc_compat(docRef, data) {
+  // fallback — tulis langsung via updateDoc
+  return updateDoc(docRef, data);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Manual modal (tidak berubah dari v9)
+═══════════════════════════════════════════════════════════ */
 window.openManualModal = function() {
   document.getElementById('manualTitle').textContent = 'Tambah Operator Manual';
-  ['opDocId','opName','opRfid','opDept'].forEach(id => document.getElementById(id).value = '');
+  ['opDocId', 'opName', 'opRfid', 'opDept'].forEach(id => document.getElementById(id).value = '');
   openModal('modalManual');
 };
 
@@ -258,51 +535,57 @@ window.saveManual = async function() {
     rfid_uid:   document.getElementById('opRfid').value.trim().toUpperCase(),
     department: document.getElementById('opDept').value.trim()
   };
-  if (!body.full_name || !body.rfid_uid) { showToast('Nama dan RFID wajib diisi','error'); return; }
+  if (!body.full_name || !body.rfid_uid) { showToast('Nama dan RFID wajib diisi', 'error'); return; }
   try {
-    if (id) await updateDoc(doc(db,'operators',id), body);
-    else    await addDoc(collection(db,'operators'), {...body, is_active:true, created_at:serverTimestamp()});
+    if (id) await updateDoc(doc(db, 'operators', id), body);
+    else    await addDoc(collection(db, 'operators'), { ...body, is_active: true, created_at: serverTimestamp() });
     showToast(id ? 'Operator diupdate!' : 'Operator ditambahkan!');
     closeModal('modalManual'); loadOperators();
-  } catch(e) { showToast(e.message,'error'); }
+  } catch(e) { showToast(e.message, 'error'); }
 };
 
-/* ── Delete (permanent) ── */
+/* ═══════════════════════════════════════════════════════════
+   Delete / Deactivate (tidak berubah dari v9)
+═══════════════════════════════════════════════════════════ */
 window.confirmDelete = function(id, name) {
   document.getElementById('deleteMsg').textContent = `"${name}" akan dihapus permanen dan tidak bisa dikembalikan.`;
   const btn = document.getElementById('confirmDeleteBtn');
   btn.onclick = async () => {
     try {
-      await deleteDoc(doc(db,'operators',id));
+      await deleteDoc(doc(db, 'operators', id));
       showToast(`Operator "${name}" dihapus`);
       closeModal('modalDelete'); loadOperators();
-    } catch(e) { showToast(e.message,'error'); }
+    } catch(e) { showToast(e.message, 'error'); }
   };
   openModal('modalDelete');
 };
 
-/* ── Nonaktifkan (soft delete) ── */
 window.deactivateOp = async function(id, name) {
   if (!confirm(`Nonaktifkan "${name}"?`)) return;
-  await updateDoc(doc(db,'operators',id), {is_active:false});
+  await updateDoc(doc(db, 'operators', id), { is_active: false });
   showToast('Operator dinonaktifkan'); loadOperators();
 };
 
-/* ── Load table ── */
+/* ═══════════════════════════════════════════════════════════
+   Load table (tidak berubah dari v9)
+═══════════════════════════════════════════════════════════ */
 async function loadOperators() {
-  const q    = query(collection(db,'operators'), orderBy('full_name'));
+  const q    = query(collection(db, 'operators'), orderBy('full_name'));
   const snap = await getDocs(q);
   document.getElementById('opCount').textContent = `${snap.docs.length} operator`;
   const tbody = document.getElementById('opBody');
-  if (snap.empty) { tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Belum ada operator</td></tr>`; return; }
-  tbody.innerHTML = snap.docs.map((d,i) => {
-    const op = {id:d.id, ...d.data()};
-    const dataAttr = JSON.stringify(op).replace(/"/g,'&quot;');
+  if (snap.empty) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Belum ada operator</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = snap.docs.map((d, i) => {
+    const op = { id: d.id, ...d.data() };
+    const dataAttr = JSON.stringify(op).replace(/"/g, '&quot;');
     return `<tr>
-      <td style="color:var(--text3)">${i+1}</td>
+      <td style="color:var(--text3)">${i + 1}</td>
       <td class="name">${op.full_name}</td>
       <td><code style="background:var(--bg3);padding:3px 8px;border-radius:5px;font-size:12px;color:var(--orange)">${op.rfid_uid}</code></td>
-      <td style="color:var(--text3)">${op.department||'-'}</td>
+      <td style="color:var(--text3)">${op.department || '-'}</td>
       <td>${op.is_active ? '<span class="badge badge-green">Aktif</span>' : '<span class="badge badge-gray">Nonaktif</span>'}</td>
       <td style="font-size:12px;color:var(--text3)">${formatDate(op.created_at)}</td>
       <td>
