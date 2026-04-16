@@ -6,23 +6,15 @@
   <title>Produk &amp; Target — Fuboru Counter</title>
   <link rel="stylesheet" href="/css/dashboard.css"/>
   <style>
-    /* ── Modal fix ── */
     .modal-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.55);
-      z-index: 1000;
-      align-items: center;
-      justify-content: center;
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55); z-index: 1000;
+      align-items: center; justify-content: center;
     }
     .modal-overlay.active { display: flex; }
     .modal {
-      background: var(--bg2, #1e1e1e);
-      border-radius: 14px;
-      padding: 28px;
-      width: 100%;
-      max-width: 440px;
+      background: var(--bg2, #1e1e1e); border-radius: 14px;
+      padding: 28px; width: 100%; max-width: 480px;
       box-shadow: 0 20px 60px rgba(0,0,0,0.4);
     }
     .modal-header { display:flex;align-items:center;justify-content:space-between;margin-bottom:20px; }
@@ -31,7 +23,36 @@
     .modal-close:hover { color:var(--text1); }
     .form-group   { margin-bottom:14px; }
     .form-group label { display:block;font-size:12px;font-weight:600;margin-bottom:6px;color:var(--text2); }
-    .form-group input { width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;font-size:14px;color:var(--text1); }
+    .form-group input,
+    .form-group select {
+      width:100%; box-sizing:border-box;
+      background:var(--bg3); border:1px solid var(--border2);
+      border-radius:8px; padding:10px 12px;
+      font-size:14px; color:var(--text1);
+    }
+    .form-group select option { background:var(--bg2); }
+    .form-row { display:flex; gap:12px; }
+    .form-row .form-group { flex:1; }
+    /* machine badge */
+    .badge-machine {
+      display:inline-block; padding:2px 8px; border-radius:6px;
+      font-size:11px; font-weight:700; letter-spacing:.5px;
+      background:rgba(99,102,241,.18); color:#818cf8;
+    }
+    /* multi select chips */
+    .machines-wrap {
+      display:flex; flex-wrap:wrap; gap:6px; margin-top:4px;
+    }
+    .machine-chip {
+      display:inline-flex; align-items:center; gap:4px;
+      padding:4px 10px; border-radius:20px; font-size:12px;
+      background:var(--bg3); border:1px solid var(--border2);
+      cursor:pointer; user-select:none; transition:all .15s;
+    }
+    .machine-chip.selected {
+      background:rgba(99,102,241,.25); border-color:#818cf8; color:#c7d2fe;
+    }
+    .machine-chip:hover { border-color:#818cf8; }
   </style>
 </head>
 <body id="pageBody">
@@ -40,14 +61,43 @@ import {
   db, requireAdmin, initSidebar, renderSidebar,
   showToast, formatDate,
   collection, doc, getDocs, addDoc, updateDoc, deleteDoc,
-  query, orderBy, serverTimestamp
+  query, orderBy, where, serverTimestamp
 } from '/js/firebase.js';
 
-/* ── modal helpers ── */
+// ── Daftar mesin yang tersedia (tambah/kurangi sesuai kebutuhan) ──
+const MACHINE_LIST = [
+  { code: 'KEMAS',   label: 'Mesin Kemas' },
+  { code: 'FILLING', label: 'Filling' },
+  { code: 'PRESS',   label: 'Press' },
+  { code: 'PACK',    label: 'Packing' },
+];
+
 function openModal(id)  { document.getElementById(id).classList.add('active'); }
 function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 window.openModal  = openModal;
 window.closeModal = closeModal;
+
+// ── State untuk multi-select mesin ──
+let selectedMachines = [];
+
+function renderMachineChips(containerId, currentCodes = []) {
+  selectedMachines = [...currentCodes];
+  const wrap = document.getElementById(containerId);
+  wrap.innerHTML = MACHINE_LIST.map(m => `
+    <div class="machine-chip ${selectedMachines.includes(m.code) ? 'selected' : ''}"
+         data-code="${m.code}" onclick="toggleMachineChip(this,'${m.code}')">
+      ${m.label}
+    </div>`).join('');
+}
+window.toggleMachineChip = function(el, code) {
+  if (selectedMachines.includes(code)) {
+    selectedMachines = selectedMachines.filter(c => c !== code);
+    el.classList.remove('selected');
+  } else {
+    selectedMachines.push(code);
+    el.classList.add('selected');
+  }
+};
 
 async function init() {
   const user = await requireAdmin();
@@ -63,8 +113,21 @@ async function init() {
     <div class="page-content">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>#</th><th>Nama Produk</th><th>Target / Sesi</th><th>Deskripsi</th><th>Status</th><th>Dibuat</th><th>Aksi</th></tr></thead>
-          <tbody id="prodBody"><tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Memuat...</td></tr></tbody>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Nama Produk</th>
+              <th>Target / Sesi</th>
+              <th>Mesin</th>
+              <th>Deskripsi</th>
+              <th>Status</th>
+              <th>Dibuat</th>
+              <th>Aksi</th>
+            </tr>
+          </thead>
+          <tbody id="prodBody">
+            <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text3)">Memuat...</td></tr>
+          </tbody>
         </table>
       </div>
     </div>
@@ -77,9 +140,31 @@ async function init() {
         <span class="modal-title" id="prodModalTitle">Tambah Produk</span>
         <button class="modal-close" onclick="closeModal('modalProd')">✕</button>
       </div>
-      <div class="form-group"><label>Nama Produk</label><input type="text" id="prodName" placeholder="Nama produk"/></div>
-      <div class="form-group"><label>Target per Sesi</label><input type="number" id="prodTarget" placeholder="200" min="1"/></div>
-      <div class="form-group"><label>Deskripsi (opsional)</label><input type="text" id="prodDesc" placeholder="Keterangan produk"/></div>
+      <div class="form-group">
+        <label>Nama Produk</label>
+        <input type="text" id="prodName" placeholder="Nama produk"/>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Target per Sesi</label>
+          <input type="number" id="prodTarget" placeholder="200" min="1"/>
+        </div>
+        <div class="form-group">
+          <label>Layer / Lapisan</label>
+          <input type="number" id="prodLayers" placeholder="1" min="1" value="1"/>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Area Produksi (Mesin) — pilih satu atau lebih</label>
+        <div class="machines-wrap" id="machineChips"></div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">
+          Hanya produk yang sesuai kode mesin yang akan muncul di LCD mesin tersebut.
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Deskripsi (opsional)</label>
+        <input type="text" id="prodDesc" placeholder="Keterangan produk"/>
+      </div>
       <input type="hidden" id="prodDocId"/>
       <div style="display:flex;gap:10px;margin-top:20px">
         <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modalProd')">Batal</button>
@@ -101,7 +186,6 @@ async function init() {
     </div>
   </div>`;
 
-  /* close on backdrop click */
   ['modalProd','modalDelete'].forEach(id => {
     document.getElementById(id).addEventListener('click', e => {
       if (e.target === e.currentTarget) closeModal(id);
@@ -116,15 +200,23 @@ window.openAdd = function() {
   document.getElementById('prodModalTitle').textContent = 'Tambah Produk';
   ['prodDocId','prodName','prodDesc'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('prodTarget').value = '';
+  document.getElementById('prodLayers').value = '1';
+  renderMachineChips('machineChips', []);
   openModal('modalProd');
 };
 
 window.editProd = function(id, data) {
   document.getElementById('prodModalTitle').textContent = 'Edit Produk';
   document.getElementById('prodDocId').value   = id;
-  document.getElementById('prodName').value    = data.name;
-  document.getElementById('prodTarget').value  = data.target;
+  document.getElementById('prodName').value    = data.name   || '';
+  document.getElementById('prodTarget').value  = data.target || '';
+  document.getElementById('prodLayers').value  = data.layers || 1;
   document.getElementById('prodDesc').value    = data.description || '';
+  // machine_codes bisa array atau string tunggal (backward compat)
+  let codes = [];
+  if (Array.isArray(data.machine_codes))      codes = data.machine_codes;
+  else if (data.machine_code)                  codes = [data.machine_code];
+  renderMachineChips('machineChips', codes);
   openModal('modalProd');
 };
 
@@ -132,55 +224,107 @@ window.saveProd = async function() {
   const id     = document.getElementById('prodDocId').value;
   const name   = document.getElementById('prodName').value.trim();
   const target = parseInt(document.getElementById('prodTarget').value);
+  const layers = parseInt(document.getElementById('prodLayers').value) || 1;
   const desc   = document.getElementById('prodDesc').value.trim();
+
   if (!name || !target) { showToast('Nama dan target wajib diisi','error'); return; }
-  const body = { name, target, description:desc };
+  if (selectedMachines.length === 0) { showToast('Pilih minimal satu mesin','error'); return; }
+
+  // Simpan sebagai array machine_codes DAN field machine_code (tunggal, untuk query Firestore)
+  // Karena Firestore array-contains query, kita pakai array_contains
+  // Tapi firmware pakai EQUAL filter, maka kita juga simpan field tunggal untuk kompatibilitas
+  // → simpan machine_codes (array) + machine_code (string, first element)
+  const body = {
+    name,
+    target,
+    layers,
+    description: desc,
+    machine_codes: selectedMachines,
+    machine_code: selectedMachines[0],  // primary (untuk backward compat firmware query EQUAL)
+  };
+
   try {
-    if (id) await updateDoc(doc(db,'products',id), body);
-    else    await addDoc(collection(db,'products'), {...body, is_active:true, created_at:serverTimestamp()});
+    if (id) {
+      await updateDoc(doc(db,'products',id), body);
+    } else {
+      await addDoc(collection(db,'products'), {
+        ...body, is_active: true, created_at: serverTimestamp()
+      });
+    }
     showToast(id ? 'Produk diupdate!' : 'Produk ditambahkan!');
-    closeModal('modalProd'); loadProducts();
+    closeModal('modalProd');
+    loadProducts();
   } catch(e) { showToast(e.message,'error'); }
 };
 
 window.toggleProd = async function(id, active) {
-  await updateDoc(doc(db,'products',id), {is_active:!active});
+  await updateDoc(doc(db,'products',id), { is_active: !active });
   showToast(!active ? 'Produk diaktifkan' : 'Produk dinonaktifkan');
   loadProducts();
 };
 
 window.confirmDelete = function(id, name) {
-  document.getElementById('deleteMsg').textContent = `"${name}" akan dihapus permanen dan tidak bisa dikembalikan.`;
-  const btn = document.getElementById('confirmDeleteBtn');
-  btn.onclick = async () => {
+  document.getElementById('deleteMsg').textContent =
+    `"${name}" akan dihapus permanen dan tidak bisa dikembalikan.`;
+  document.getElementById('confirmDeleteBtn').onclick = async () => {
     try {
       await deleteDoc(doc(db,'products',id));
       showToast(`Produk "${name}" dihapus`);
-      closeModal('modalDelete'); loadProducts();
+      closeModal('modalDelete');
+      loadProducts();
     } catch(e) { showToast(e.message,'error'); }
   };
   openModal('modalDelete');
 };
 
+function getMachineLabel(codes) {
+  if (!codes) return '-';
+  const arr = Array.isArray(codes) ? codes : [codes];
+  return arr.map(c => {
+    const m = MACHINE_LIST.find(x => x.code === c);
+    return `<span class="badge-machine">${m ? m.label : c}</span>`;
+  }).join(' ');
+}
+
 async function loadProducts() {
   const snap  = await getDocs(query(collection(db,'products'), orderBy('name')));
   const tbody = document.getElementById('prodBody');
-  if (snap.empty) { tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Belum ada produk</td></tr>`; return; }
-  tbody.innerHTML = snap.docs.map((d,i) => {
-    const p = {id:d.id, ...d.data()};
-    const dataAttr = JSON.stringify(p).replace(/"/g,'&quot;');
+  if (snap.empty) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text3)">Belum ada produk</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = snap.docs.map((d, i) => {
+    const p = { id: d.id, ...d.data() };
+    // Encode data untuk onclick tanpa quote konflik
+    const dataEnc = encodeURIComponent(JSON.stringify(p));
+    const machineDisplay = getMachineLabel(p.machine_codes || p.machine_code);
     return `<tr>
       <td style="color:var(--text3)">${i+1}</td>
       <td class="name">${p.name}</td>
-      <td><span style="font-family:'Syne',sans-serif;font-weight:700;color:var(--orange)">${p.target}</span> pcs</td>
+      <td>
+        <span style="font-family:'Syne',sans-serif;font-weight:700;color:var(--orange)">${p.target}</span> pcs
+        ${p.layers > 1 ? `<span style="font-size:11px;color:var(--text3)"> × ${p.layers} layer</span>` : ''}
+      </td>
+      <td>${machineDisplay}</td>
       <td style="color:var(--text3)">${p.description||'-'}</td>
-      <td>${p.is_active ? '<span class="badge badge-green">Aktif</span>' : '<span class="badge badge-gray">Nonaktif</span>'}</td>
+      <td>${p.is_active
+        ? '<span class="badge badge-green">Aktif</span>'
+        : '<span class="badge badge-gray">Nonaktif</span>'}</td>
       <td style="font-size:12px;color:var(--text3)">${formatDate(p.created_at)}</td>
       <td>
         <div style="display:flex;gap:6px">
-          <button class="btn btn-secondary btn-sm" onclick="editProd('${p.id}',${dataAttr})">Edit</button>
-          <button class="btn btn-${p.is_active?'secondary':'secondary'} btn-sm" onclick="toggleProd('${p.id}',${p.is_active})">${p.is_active?'Nonaktifkan':'Aktifkan'}</button>
-          <button class="btn btn-danger btn-sm" onclick="confirmDelete('${p.id}','${p.name}')">Hapus</button>
+          <button class="btn btn-secondary btn-sm"
+            onclick="editProd('${p.id}', JSON.parse(decodeURIComponent('${dataEnc}')))">
+            Edit
+          </button>
+          <button class="btn btn-secondary btn-sm"
+            onclick="toggleProd('${p.id}',${p.is_active})">
+            ${p.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+          </button>
+          <button class="btn btn-danger btn-sm"
+            onclick="confirmDelete('${p.id}','${p.name.replace(/'/g,"\\'")}')">
+            Hapus
+          </button>
         </div>
       </td>
     </tr>`;
