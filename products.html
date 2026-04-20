@@ -33,13 +33,11 @@
     .form-group select option { background:var(--bg2); }
     .form-row { display:flex; gap:12px; }
     .form-row .form-group { flex:1; }
-    /* machine badge */
     .badge-machine {
       display:inline-block; padding:2px 8px; border-radius:6px;
       font-size:11px; font-weight:700; letter-spacing:.5px;
       background:rgba(99,102,241,.18); color:#818cf8;
     }
-    /* multi select chips */
     .machines-wrap {
       display:flex; flex-wrap:wrap; gap:6px; margin-top:4px;
     }
@@ -53,6 +51,11 @@
       background:rgba(99,102,241,.25); border-color:#818cf8; color:#c7d2fe;
     }
     .machine-chip:hover { border-color:#818cf8; }
+    /* [FIX] target hint */
+    .target-hint {
+      font-size:11px; color:var(--text3); margin-top:4px;
+    }
+    .target-hint span { color: #f59e0b; font-weight:600; }
   </style>
 </head>
 <body id="pageBody">
@@ -60,16 +63,15 @@
 import {
   db, requireAdmin, initSidebar, renderSidebar,
   showToast, formatDate,
-  collection, doc, getDocs, addDoc, updateDoc, deleteDoc,
+  collection, doc, getDocs, getDoc, addDoc, updateDoc, deleteDoc,
   query, orderBy, where, serverTimestamp
 } from '/js/firebase.js';
 
-// ── Daftar mesin yang tersedia (tambah/kurangi sesuai kebutuhan) ──
 const MACHINE_LIST = [
   { code: 'KEMAS',   label: 'Mesin Kemas' },
-  { code: 'FILLING', label: 'Mesin Plong' },
-  { code: 'PRESS',   label: 'Mesin Sysco' },
-  { code: 'PACK',    label: 'Mesin Plong 2' },
+  { code: 'PRESS 1', label: 'Mesin Plong 1' },
+  { code: 'PRESS 2',   label: 'Mesin Plong 2' },
+  { code: 'SYSCO',    label: 'Mesin Sysco' },
 ];
 
 function openModal(id)  { document.getElementById(id).classList.add('active'); }
@@ -77,7 +79,6 @@ function closeModal(id) { document.getElementById(id).classList.remove('active')
 window.openModal  = openModal;
 window.closeModal = closeModal;
 
-// ── State untuk multi-select mesin ──
 let selectedMachines = [];
 
 function renderMachineChips(containerId, currentCodes = []) {
@@ -117,7 +118,7 @@ async function init() {
             <tr>
               <th>#</th>
               <th>Nama Produk</th>
-              <th>Target / Sesi</th>
+              <th>Target Saat Ini</th>
               <th>Mesin</th>
               <th>Deskripsi</th>
               <th>Status</th>
@@ -146,8 +147,11 @@ async function init() {
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>Target per Sesi</label>
-          <input type="number" id="prodTarget" placeholder="200" min="1"/>
+          <label>Target / Sisa Produksi</label>
+          <input type="number" id="prodTarget" placeholder="200" min="0"/>
+          <div class="target-hint" id="targetHint" style="display:none">
+            Target terkini di Firestore: <span id="targetLive">-</span> pcs
+          </div>
         </div>
         <div class="form-group">
           <label>Layer / Lapisan</label>
@@ -155,10 +159,10 @@ async function init() {
         </div>
       </div>
       <div class="form-group">
-        <label>Area Produksi (Mesin) — pilih satu atau lebih</label>
+        <label>Area Produksi (Mesin)</label>
         <div class="machines-wrap" id="machineChips"></div>
         <div style="font-size:11px;color:var(--text3);margin-top:6px">
-          Hanya produk yang sesuai kode mesin yang akan muncul di LCD mesin tersebut.
+          Pilih satu atau lebih mesin.
         </div>
       </div>
       <div class="form-group">
@@ -201,23 +205,41 @@ window.openAdd = function() {
   ['prodDocId','prodName','prodDesc'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('prodTarget').value = '';
   document.getElementById('prodLayers').value = '1';
+  document.getElementById('targetHint').style.display = 'none';
   renderMachineChips('machineChips', []);
   openModal('modalProd');
 };
 
-window.editProd = function(id, data) {
+// [FIX] editProd: re-fetch dokumen dari Firestore untuk dapat target terkini
+window.editProd = async function(id) {
   document.getElementById('prodModalTitle').textContent = 'Edit Produk';
-  document.getElementById('prodDocId').value   = id;
-  document.getElementById('prodName').value    = data.name   || '';
-  document.getElementById('prodTarget').value  = data.target || '';
-  document.getElementById('prodLayers').value  = data.layers || 1;
-  document.getElementById('prodDesc').value    = data.description || '';
-  // machine_codes bisa array atau string tunggal (backward compat)
-  let codes = [];
-  if (Array.isArray(data.machine_codes))      codes = data.machine_codes;
-  else if (data.machine_code)                  codes = [data.machine_code];
-  renderMachineChips('machineChips', codes);
+  document.getElementById('prodDocId').value = id;
+  document.getElementById('prodTarget').value = '';
+  document.getElementById('targetHint').style.display = 'none';
   openModal('modalProd');
+
+  try {
+    // GET dokumen terkini langsung dari Firestore (bukan dari cache lokal)
+    const snap = await getDoc(doc(db, 'products', id));
+    if (!snap.exists()) { showToast('Produk tidak ditemukan', 'error'); closeModal('modalProd'); return; }
+    const data = snap.data();
+
+    document.getElementById('prodName').value   = data.name        || '';
+    document.getElementById('prodTarget').value = data.target      ?? '';
+    document.getElementById('prodLayers').value = data.layers      || 1;
+    document.getElementById('prodDesc').value   = data.description || '';
+
+    // Tampilkan target terkini sebagai hint agar admin tahu nilai real
+    document.getElementById('targetLive').textContent = data.target ?? '-';
+    document.getElementById('targetHint').style.display = 'block';
+
+    let codes = [];
+    if (Array.isArray(data.machine_codes)) codes = data.machine_codes;
+    else if (data.machine_code)            codes = [data.machine_code];
+    renderMachineChips('machineChips', codes);
+  } catch(e) {
+    showToast('Gagal fetch data: ' + e.message, 'error');
+  }
 };
 
 window.saveProd = async function() {
@@ -227,38 +249,35 @@ window.saveProd = async function() {
   const layers = parseInt(document.getElementById('prodLayers').value) || 1;
   const desc   = document.getElementById('prodDesc').value.trim();
 
-  if (!name || !target) { showToast('Nama dan target wajib diisi','error'); return; }
-  if (selectedMachines.length === 0) { showToast('Pilih minimal satu mesin','error'); return; }
+  if (!name)            { showToast('Nama wajib diisi', 'error'); return; }
+  if (isNaN(target) || target < 0) { showToast('Target harus angka >= 0', 'error'); return; }
+  if (selectedMachines.length === 0) { showToast('Pilih minimal satu mesin', 'error'); return; }
 
-  // Simpan sebagai array machine_codes DAN field machine_code (tunggal, untuk query Firestore)
-  // Karena Firestore array-contains query, kita pakai array_contains
-  // Tapi firmware pakai EQUAL filter, maka kita juga simpan field tunggal untuk kompatibilitas
-  // → simpan machine_codes (array) + machine_code (string, first element)
   const body = {
     name,
     target,
     layers,
     description: desc,
     machine_codes: selectedMachines,
-    machine_code: selectedMachines[0],  // primary (untuk backward compat firmware query EQUAL)
+    machine_code: selectedMachines[0],
   };
 
   try {
     if (id) {
-      await updateDoc(doc(db,'products',id), body);
+      await updateDoc(doc(db, 'products', id), body);
     } else {
-      await addDoc(collection(db,'products'), {
+      await addDoc(collection(db, 'products'), {
         ...body, is_active: true, created_at: serverTimestamp()
       });
     }
     showToast(id ? 'Produk diupdate!' : 'Produk ditambahkan!');
     closeModal('modalProd');
     loadProducts();
-  } catch(e) { showToast(e.message,'error'); }
+  } catch(e) { showToast(e.message, 'error'); }
 };
 
 window.toggleProd = async function(id, active) {
-  await updateDoc(doc(db,'products',id), { is_active: !active });
+  await updateDoc(doc(db, 'products', id), { is_active: !active });
   showToast(!active ? 'Produk diaktifkan' : 'Produk dinonaktifkan');
   loadProducts();
 };
@@ -268,11 +287,11 @@ window.confirmDelete = function(id, name) {
     `"${name}" akan dihapus permanen dan tidak bisa dikembalikan.`;
   document.getElementById('confirmDeleteBtn').onclick = async () => {
     try {
-      await deleteDoc(doc(db,'products',id));
+      await deleteDoc(doc(db, 'products', id));
       showToast(`Produk "${name}" dihapus`);
       closeModal('modalDelete');
       loadProducts();
-    } catch(e) { showToast(e.message,'error'); }
+    } catch(e) { showToast(e.message, 'error'); }
   };
   openModal('modalDelete');
 };
@@ -287,7 +306,8 @@ function getMachineLabel(codes) {
 }
 
 async function loadProducts() {
-  const snap  = await getDocs(query(collection(db,'products'), orderBy('name')));
+  // [FIX] Selalu fetch ulang dari server (tidak pakai cache browser)
+  const snap  = await getDocs(query(collection(db, 'products'), orderBy('name')));
   const tbody = document.getElementById('prodBody');
   if (snap.empty) {
     tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text3)">Belum ada produk</td></tr>`;
@@ -295,16 +315,17 @@ async function loadProducts() {
   }
   tbody.innerHTML = snap.docs.map((d, i) => {
     const p = { id: d.id, ...d.data() };
-    // Encode data untuk onclick tanpa quote konflik
-    const dataEnc = encodeURIComponent(JSON.stringify(p));
     const machineDisplay = getMachineLabel(p.machine_codes || p.machine_code);
+    // Target 0 = habis/selesai
+    const targetDisplay = p.target === 0
+      ? '<span style="color:#6b7280;font-size:12px">Habis / selesai</span>'
+      : `<span style="font-family:\'Syne\',sans-serif;font-weight:700;color:var(--orange)">${p.target}</span> pcs
+         ${p.layers > 1 ? `<span style="font-size:11px;color:var(--text3)"> × ${p.layers} layer</span>` : ''}`;
+
     return `<tr>
       <td style="color:var(--text3)">${i+1}</td>
       <td class="name">${p.name}</td>
-      <td>
-        <span style="font-family:'Syne',sans-serif;font-weight:700;color:var(--orange)">${p.target}</span> pcs
-        ${p.layers > 1 ? `<span style="font-size:11px;color:var(--text3)"> × ${p.layers} layer</span>` : ''}
-      </td>
+      <td>${targetDisplay}</td>
       <td>${machineDisplay}</td>
       <td style="color:var(--text3)">${p.description||'-'}</td>
       <td>${p.is_active
@@ -313,8 +334,7 @@ async function loadProducts() {
       <td style="font-size:12px;color:var(--text3)">${formatDate(p.created_at)}</td>
       <td>
         <div style="display:flex;gap:6px">
-          <button class="btn btn-secondary btn-sm"
-            onclick="editProd('${p.id}', JSON.parse(decodeURIComponent('${dataEnc}')))">
+          <button class="btn btn-secondary btn-sm" onclick="editProd('${p.id}')">
             Edit
           </button>
           <button class="btn btn-secondary btn-sm"
