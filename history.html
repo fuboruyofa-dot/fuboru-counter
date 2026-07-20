@@ -176,19 +176,28 @@ window.loadSessions = async function(silent=false) {
   const tbody=document.getElementById('bodySession');
   if (!silent) tbody.innerHTML=`<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text2)">Memuat...</td></tr>`;
 
+  // Helper: konversi Firestore Timestamp / string ISO ke JS Date
+  const toDate = v => {
+    if (!v) return null;
+    if (v.toDate) return v.toDate();
+    if (v.seconds) return new Date(v.seconds * 1000);
+    return new Date(v);
+  };
+
   let rows=[];
   try {
-    let q = from
-      ? query(collection(db,'sessions'),where('started_at','>=',new Date(from)),orderBy('started_at','desc'),limit(300))
-      : query(collection(db,'sessions'),orderBy('started_at','desc'),limit(300));
+    // Ambil semua, filter client-side agar tidak butuh composite index
+    let q = query(collection(db,'sessions'), orderBy('started_at','desc'), limit(500));
     rows = (await getDocs(q)).docs.map(d=>({id:d.id,...d.data()}));
   } catch(e) {
-    try { rows=(await getDocs(query(collection(db,'sessions'),limit(300)))).docs.map(d=>({id:d.id,...d.data()})); }
+    console.warn('orderBy fallback:', e.message);
+    try { rows=(await getDocs(query(collection(db,'sessions'),limit(500)))).docs.map(d=>({id:d.id,...d.data()})); }
     catch(e2){console.error(e2);}
   }
 
-  if (to)      rows=rows.filter(r=>!r.started_at||r.started_at?.toDate()<=new Date(to+'T23:59:59'));
-  if (from)    rows=rows.filter(r=>!r.started_at||r.started_at?.toDate()>=new Date(from));
+  // Filter client-side — handle Firestore Timestamp & string keduanya
+  if (from) rows=rows.filter(r=>{ const d=toDate(r.started_at); return !d||d>=new Date(from); });
+  if (to)   rows=rows.filter(r=>{ const d=toDate(r.started_at); return !d||d<=new Date(to+'T23:59:59'); });
   if (machine) rows=rows.filter(r=>(r.machine_code||r.id)===machine);
   if (status==='complete') rows=rows.filter(r=>r.target>0&&(r.count||0)>=r.target);
   else if (status) rows=rows.filter(r=>r.status===status);
@@ -210,10 +219,8 @@ window.loadLogs = async function(silent=false) {
 
   let rows=[];
   try {
-    // Query semua logs subcollection dengan collectionGroup
-    let q = from
-      ? query(collectionGroup(db,'logs'),where('timestamp','>=',new Date(from)),orderBy('timestamp','desc'),limit(500))
-      : query(collectionGroup(db,'logs'),orderBy('timestamp','desc'),limit(500));
+    // Query collectionGroup logs
+    let q = query(collectionGroup(db,'logs'), orderBy('timestamp','desc'), limit(500));
     rows=(await getDocs(q)).docs.map(d=>({id:d.id,_path:d.ref.path,...d.data()}));
   } catch(e) {
     console.warn('collectionGroup fallback:', e.message);
@@ -228,9 +235,9 @@ window.loadLogs = async function(silent=false) {
     }
   }
 
-  // Gabungkan info mesin dari session_id
-  if (to)      rows=rows.filter(r=>!r.timestamp||r.timestamp?.toDate()<=new Date(to+'T23:59:59'));
-  if (from)    rows=rows.filter(r=>!r.timestamp||r.timestamp?.toDate()>=new Date(from));
+  // Filter logs client-side
+  if (from) rows=rows.filter(r=>{ const d=r.timestamp?.toDate?r.timestamp.toDate():r.timestamp?.seconds?new Date(r.timestamp.seconds*1000):new Date(r.timestamp); return !r.timestamp||d>=new Date(from); });
+  if (to)   rows=rows.filter(r=>{ const d=r.timestamp?.toDate?r.timestamp.toDate():r.timestamp?.seconds?new Date(r.timestamp.seconds*1000):new Date(r.timestamp); return !r.timestamp||d<=new Date(to+'T23:59:59'); });
 
   // Filter mesin — ambil machine_code dari path (sessions/{sesId}/logs/{logId})
   if (machine) {
@@ -255,11 +262,17 @@ function fmtDur(sec) {
   const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;
   if(h>0) return `${h}j ${m}m`; if(m>0) return `${m}m ${s}d`; return `${s}d`;
 }
+function toJsDate(v) {
+  if (!v) return null;
+  if (v.toDate) return v.toDate();
+  if (v.seconds) return new Date(v.seconds * 1000);
+  return new Date(v);
+}
 function calcDur(r) {
   if (!r.started_at) return null;
-  const s=r.started_at.toDate?r.started_at.toDate():new Date(r.started_at);
-  const e=r.finished_at?(r.finished_at.toDate?r.finished_at.toDate():new Date(r.finished_at)):new Date();
-  return Math.max(0,Math.floor((e-s)/1000));
+  const s = toJsDate(r.started_at);
+  const e = r.finished_at ? toJsDate(r.finished_at) : new Date();
+  return Math.max(0, Math.floor((e - s) / 1000));
 }
 function fmtPct(count,target) {
   if (!target) return {pct:0,color:'var(--text2)',complete:false};
