@@ -49,15 +49,25 @@ async function logout() {
 }
 
 // ── Format helpers ──
+function tsToDate(ts) {
+  if (!ts) return null;
+  if (ts.toDate) return ts.toDate();                  // Firestore Timestamp object
+  if (ts.seconds) return new Date(ts.seconds * 1000); // plain {seconds, nanoseconds}
+  const d = new Date(ts);                              // string ISO
+  return isNaN(d) ? null : d;
+}
+
 function formatDate(ts) {
-  if (!ts) return '-';
-  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  const d = tsToDate(ts);
+  if (!d) return '-';
   return d.toLocaleDateString('id-ID', { day:'2-digit', month:'short', year:'numeric' });
 }
 
 function formatDateTime(ts) {
-  if (!ts) return '-';
-  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  const d = tsToDate(ts);
+  if (!d) return '-';
+  // Guard: jangan tampil 1970
+  if (d.getFullYear() < 2000) return '(waktu tidak valid)';
   return d.toLocaleString('id-ID', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
 }
 
