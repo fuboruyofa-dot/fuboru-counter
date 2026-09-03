@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Import Kode Produk — Fuboru Counter</title>
+  <link rel="stylesheet" href="/css/dashboard.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    .upload-box {
+      border: 2px dashed var(--border2); border-radius: 14px;
+      padding: 40px; text-align: center; cursor: pointer;
+      transition: border-color .15s;
+    }
+    .upload-box:hover, .upload-box.dragover { border-color: #818cf8; }
+    .upload-box input { display: none; }
+    .upload-icon { font-size: 32px; margin-bottom: 10px; }
+    .preview-wrap { margin-top: 24px; }
+    .preview-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .preview-table th, .preview-table td {
+      padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border2);
+    }
+    .preview-table th { color: var(--text3); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+    .summary-bar {
+      display: flex; gap: 24px; margin-top: 16px; padding: 14px 18px;
+      background: var(--bg3); border-radius: 10px; font-size: 13px;
+    }
+    .summary-bar b { color: var(--orange); }
+    .progress-wrap { margin-top: 16px; }
+    .progress-track { background: var(--bg3); border-radius: 8px; height: 8px; overflow: hidden; }
+    .progress-fill { background: #818cf8; height: 100%; width: 0%; transition: width .2s; }
+    .progress-label { font-size: 12px; color: var(--text3); margin-top: 6px; }
+    .warn-row { color: #f59e0b; }
+  </style>
+</head>
+<body id="pageBody">
+<script type="module">
+import {
+  db, requireAdmin, initSidebar, renderSidebar, showToast,
+  doc, getDoc, collection, getDocs, setDoc
+} from '/js/firebase.js';
+import { writeBatch } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js';
+
+let parsedRows = [];   // { hint, nama_produk, kode_brg }
+let user;
+
+function sanitizeId(str) {
+  return String(str).trim().replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 200);
+}
+
+async function init() {
+  user = await requireAdmin();
+  document.getElementById('pageBody').innerHTML = `
+  ${renderSidebar('', user.role)}
+  <div class="main">
+    <div class="topbar">
+      <h1>Import Kode Produk</h1>
+    </div>
+    <div class="page-content">
+      <p style="color:var(--text3);font-size:13px;margin-bottom:20px;max-width:640px">
+        Upload file Excel/CSV kolom <b>KodeBrg</b>, <b>Hint</b>, <b>Product</b>. Data akan disimpan ke
+        collection <code>id_product</code> di Firestore, dengan <b>Hint</b> sebagai Document ID
+        (dipakai untuk autocomplete nama produk di halaman Produk &amp; Target).
+      </p>
+
+      <div class="upload-box" id="uploadBox">
+        <div class="upload-icon">📄</div>
+        <div>Klik atau seret file .xls / .xlsx / .csv ke sini</div>
+        <input type="file" id="fileInput" accept=".xls,.xlsx,.csv"/>
+      </div>
+
+      <div id="previewSection" style="display:none" class="preview-wrap">
+        <div class="summary-bar" id="summaryBar"></div>
+        <div style="max-height:360px;overflow:auto;margin-top:14px;border:1px solid var(--border2);border-radius:10px">
+          <table class="preview-table">
+            <thead><tr><th>Hint (Doc ID)</th><th>Nama Produk</th><th>Kode Barang</th></tr></thead>
+            <tbody id="previewBody"></tbody>
+          </table>
+        </div>
+        <div class="progress-wrap" id="progressWrap" style="display:none">
+          <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+          <div class="progress-label" id="progressLabel">Mengimpor...</div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:20px">
+          <button class="btn btn-secondary" id="cancelBtn">Batal</button>
+          <button class="btn btn-primary" id="importBtn">Import ke Firestore</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  initSidebar(user);
+  setupUpload();
+}
+
+function setupUpload() {
+  const box   = document.getElementById('uploadBox');
+  const input = document.getElementById('fileInput');
+  box.addEventListener('click', () => input.click());
+  box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('dragover'); });
+  box.addEventListener('dragleave', () => box.classList.remove('dragover'));
+  box.addEventListener('drop', e => {
+    e.preventDefault(); box.classList.remove('dragover');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+  input.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+  document.addEventListener('click', e => {
+    if (e.target.id === 'cancelBtn') resetUpload();
+    if (e.target.id === 'importBtn') runImport();
+  });
+}
+
+function resetUpload() {
+  parsedRows = [];
+  document.getElementById('previewSection').style.display = 'none';
+  document.getElementById('fileInput').value = '';
+}
+
+function handleFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+      const seen = new Set();
+      const dupes = [];
+      parsedRows = rows.map(r => {
+        const kodeBrg = String(r.KodeBrg ?? r.kodeBrg ?? '').trim();
+        const hintRaw = String(r.Hint ?? r.hint ?? '').trim();
+        const nama    = String(r.Product ?? r.product ?? r.nama_produk ?? '').trim();
+        const hint    = sanitizeId(hintRaw);
+        return { hint, nama_produk: nama, kode_brg: kodeBrg };
+      }).filter(r => r.hint && r.nama_produk);
+
+      parsedRows.forEach(r => {
+        if (seen.has(r.hint)) dupes.push(r.hint);
+        seen.add(r.hint);
+      });
+
+      renderPreview(rows.length, dupes);
+    } catch (err) {
+      showToast('Gagal membaca file: ' + err.message, 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderPreview(totalRaw, dupes) {
+  document.getElementById('previewSection').style.display = 'block';
+  document.getElementById('summaryBar').innerHTML = `
+    <div>Baris terbaca: <b>${totalRaw}</b></div>
+    <div>Valid & siap diimpor: <b>${parsedRows.length}</b></div>
+    <div style="${dupes.length ? '' : 'display:none'}" class="warn-row">Hint duplikat: <b>${dupes.length}</b> (akan menimpa satu sama lain)</div>
+  `;
+  const body = document.getElementById('previewBody');
+  body.innerHTML = parsedRows.slice(0, 50).map(r => `
+    <tr>
+      <td style="font-family:monospace">${r.hint}</td>
+      <td>${r.nama_produk}</td>
+      <td style="color:var(--text3)">${r.kode_brg || '-'}</td>
+    </tr>`).join('') + (parsedRows.length > 50
+      ? `<tr><td colspan="3" style="text-align:center;color:var(--text3)">...dan ${parsedRows.length - 50} baris lainnya</td></tr>` : '');
+}
+
+async function runImport() {
+  if (!parsedRows.length) { showToast('Tidak ada data valid untuk diimpor', 'error'); return; }
+  document.getElementById('importBtn').disabled = true;
+  document.getElementById('cancelBtn').disabled = true;
+  const wrap  = document.getElementById('progressWrap');
+  const fill  = document.getElementById('progressFill');
+  const label = document.getElementById('progressLabel');
+  wrap.style.display = 'block';
+
+  const CHUNK = 400;
+  let done = 0;
+  try {
+    for (let i = 0; i < parsedRows.length; i += CHUNK) {
+      const chunk = parsedRows.slice(i, i + CHUNK);
+      const batch = writeBatch(db);
+      chunk.forEach(r => {
+        batch.set(doc(db, 'id_product', r.hint), {
+          hint: r.hint,
+          nama_produk: r.nama_produk,
+          kode_brg: r.kode_brg || null
+        }, { merge: true });
+      });
+      await batch.commit();
+      done += chunk.length;
+      const pct = Math.round((done / parsedRows.length) * 100);
+      fill.style.width = pct + '%';
+      label.textContent = `Mengimpor... ${done} / ${parsedRows.length}`;
+    }
+    label.textContent = `Selesai! ${done} produk diimpor ke collection id_product.`;
+    showToast(`${done} kode produk berhasil diimpor`);
+  } catch (err) {
+    showToast('Gagal impor: ' + err.message, 'error');
+    label.textContent = 'Import gagal, lihat pesan error.';
+  } finally {
+    document.getElementById('cancelBtn').disabled = false;
+    document.getElementById('importBtn').disabled = false;
+  }
+}
+
+init();
+</script>
+</body>
+</html>
