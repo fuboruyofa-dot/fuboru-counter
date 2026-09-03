@@ -56,6 +56,30 @@
       font-size:11px; color:var(--text3); margin-top:4px;
     }
     .target-hint span { color: #f59e0b; font-weight:600; }
+
+    /* Autocomplete nama produk (id_product) */
+    .name-field-wrap { position: relative; }
+    .suggest-list {
+      display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+      max-height: 220px; overflow-y: auto; z-index: 20;
+      background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+    }
+    .suggest-item {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 8px 12px; font-size: 13px; cursor: pointer;
+    }
+    .suggest-item:hover { background: rgba(99,102,241,.18); }
+    .suggest-code {
+      font-family: monospace; font-size: 11px; color: var(--text3);
+      flex-shrink: 0;
+    }
+    .suggest-empty { padding: 10px 12px; font-size: 12px; color: var(--text3); }
+    .hint-code-badge {
+      display: inline-block; font-family: monospace; font-size: 11px;
+      color: var(--text3); background: var(--bg3); border: 1px solid var(--border2);
+      border-radius: 6px; padding: 2px 6px;
+    }
   </style>
 </head>
 <body id="pageBody">
@@ -100,6 +124,58 @@ window.toggleMachineChip = function(el, code) {
   }
 };
 
+// ── Katalog kode produk (id_product) untuk autocomplete ──
+let productCatalog = null; // [{ hint, nama_produk }]
+async function loadCatalogOnce() {
+  if (productCatalog) return productCatalog;
+  try {
+    const snap = await getDocs(collection(db, 'id_product'));
+    productCatalog = snap.docs.map(d => ({ hint: d.id, nama_produk: d.data().nama_produk || '' }));
+  } catch (e) {
+    productCatalog = [];
+    showToast('Gagal memuat katalog kode produk: ' + e.message, 'error');
+  }
+  return productCatalog;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function onProdNameInput(e) {
+  const box = document.getElementById('prodSuggest');
+  const val = e.target.value.trim().toLowerCase();
+  document.getElementById('prodHint').value = ''; // ketik manual = lepas dari katalog
+
+  if (!val) { box.style.display = 'none'; box.innerHTML = ''; return; }
+
+  const catalog = await loadCatalogOnce();
+  const matches = catalog
+    .filter(p => p.nama_produk.toLowerCase().includes(val))
+    .slice(0, 30);
+
+  if (!matches.length) {
+    box.innerHTML = `<div class="suggest-empty">Tidak ada di katalog kode produk — akan disimpan tanpa kode.</div>`;
+    box.style.display = 'block';
+    return;
+  }
+
+  box.innerHTML = matches.map(p => `
+    <div class="suggest-item" data-hint="${escapeHtml(p.hint)}" data-nama="${escapeHtml(p.nama_produk)}">
+      <span>${escapeHtml(p.nama_produk)}</span>
+      <span class="suggest-code">${escapeHtml(p.hint)}</span>
+    </div>`).join('');
+  box.style.display = 'block';
+}
+
+function onSuggestClick(e) {
+  const item = e.target.closest('.suggest-item');
+  if (!item || !item.dataset.hint) return;
+  document.getElementById('prodName').value = item.dataset.nama;
+  document.getElementById('prodHint').value = item.dataset.hint;
+  document.getElementById('prodSuggest').style.display = 'none';
+}
+
 async function init() {
   const user = await requireAdmin();
   document.getElementById('pageBody').innerHTML = `
@@ -117,6 +193,7 @@ async function init() {
           <thead>
             <tr>
               <th>#</th>
+              <th>Kode</th>
               <th>Nama Produk</th>
               <th>Target Saat Ini</th>
               <th>Mesin</th>
@@ -127,7 +204,7 @@ async function init() {
             </tr>
           </thead>
           <tbody id="prodBody">
-            <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text3)">Memuat...</td></tr>
+            <tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text3)">Memuat...</td></tr>
           </tbody>
         </table>
       </div>
@@ -141,9 +218,14 @@ async function init() {
         <span class="modal-title" id="prodModalTitle">Tambah Produk</span>
         <button class="modal-close" onclick="closeModal('modalProd')">✕</button>
       </div>
-      <div class="form-group">
+      <div class="form-group name-field-wrap">
         <label>Nama Produk</label>
-        <input type="text" id="prodName" placeholder="Nama produk"/>
+        <input type="text" id="prodName" placeholder="Ketik nama produk..." autocomplete="off"/>
+        <input type="hidden" id="prodHint"/>
+        <div class="suggest-list" id="prodSuggest"></div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">
+          Pilih dari daftar untuk otomatis mengisi kode produk, atau ketik manual jika belum ada di katalog.
+        </div>
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -196,16 +278,25 @@ async function init() {
     });
   });
 
+  document.getElementById('prodName').addEventListener('input', onProdNameInput);
+  document.getElementById('prodSuggest').addEventListener('click', onSuggestClick);
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.name-field-wrap')) {
+      document.getElementById('prodSuggest').style.display = 'none';
+    }
+  });
+
   initSidebar(user);
   loadProducts();
 }
 
 window.openAdd = function() {
   document.getElementById('prodModalTitle').textContent = 'Tambah Produk';
-  ['prodDocId','prodName','prodDesc'].forEach(id => document.getElementById(id).value = '');
+  ['prodDocId','prodName','prodDesc','prodHint'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('prodTarget').value = '';
   document.getElementById('prodLayers').value = '1';
   document.getElementById('targetHint').style.display = 'none';
+  document.getElementById('prodSuggest').style.display = 'none';
   renderMachineChips('machineChips', []);
   openModal('modalProd');
 };
@@ -216,6 +307,7 @@ window.editProd = async function(id) {
   document.getElementById('prodDocId').value = id;
   document.getElementById('prodTarget').value = '';
   document.getElementById('targetHint').style.display = 'none';
+  document.getElementById('prodSuggest').style.display = 'none';
   openModal('modalProd');
 
   try {
@@ -225,6 +317,7 @@ window.editProd = async function(id) {
     const data = snap.data();
 
     document.getElementById('prodName').value   = data.name        || '';
+    document.getElementById('prodHint').value   = data.hint        || '';
     document.getElementById('prodTarget').value = data.target      ?? '';
     document.getElementById('prodLayers').value = data.layers      || 1;
     document.getElementById('prodDesc').value   = data.description || '';
@@ -245,6 +338,7 @@ window.editProd = async function(id) {
 window.saveProd = async function() {
   const id     = document.getElementById('prodDocId').value;
   const name   = document.getElementById('prodName').value.trim();
+  const hint   = document.getElementById('prodHint').value.trim();
   const target = parseInt(document.getElementById('prodTarget').value);
   const layers = parseInt(document.getElementById('prodLayers').value) || 1;
   const desc   = document.getElementById('prodDesc').value.trim();
@@ -255,6 +349,7 @@ window.saveProd = async function() {
 
   const body = {
     name,
+    hint: hint || null,
     target,
     layers,
     description: desc,
@@ -310,12 +405,15 @@ async function loadProducts() {
   const snap  = await getDocs(query(collection(db, 'products'), orderBy('name')));
   const tbody = document.getElementById('prodBody');
   if (snap.empty) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text3)">Belum ada produk</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text3)">Belum ada produk</td></tr>`;
     return;
   }
   tbody.innerHTML = snap.docs.map((d, i) => {
     const p = { id: d.id, ...d.data() };
     const machineDisplay = getMachineLabel(p.machine_codes || p.machine_code);
+    const kodeDisplay = p.hint
+      ? `<span class="hint-code-badge">${escapeHtml(p.hint)}</span>`
+      : '<span style="color:var(--text3);font-size:12px">-</span>';
     // Target 0 = habis/selesai
     const targetDisplay = p.target === 0
       ? '<span style="color:#6b7280;font-size:12px">Habis / selesai</span>'
@@ -324,6 +422,7 @@ async function loadProducts() {
 
     return `<tr>
       <td style="color:var(--text3)">${i+1}</td>
+      <td>${kodeDisplay}</td>
       <td class="name">${p.name}</td>
       <td>${targetDisplay}</td>
       <td>${machineDisplay}</td>
