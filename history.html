@@ -133,9 +133,8 @@ async function init() {
 
   await loadMachineOptions(filterMachine);
   await loadSessions();
-  setInterval(() => { if (activeTab==='session') loadSessions(true); else loadLogs(true); }, 30000);
 }
-
+  
 let activeTab = 'session';
 let logLoaded = false;
 
