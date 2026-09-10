@@ -124,13 +124,30 @@ window.toggleMachineChip = function(el, code) {
   }
 };
 
-// ── Katalog kode produk (id_product) untuk autocomplete ──
+// ── [FIX #1] Katalog kode produk (id_product) untuk autocomplete ──
+// SEBELUM: getDocs(collection(db,'id_product')) menarik SELURUH dokumen
+// (±4500 reads) setiap kali halaman ini dibuka & admin mulai mengetik.
+// SESUDAH: 1x getDoc() ke dokumen katalog gabungan yang sudah disiapkan
+// oleh import-kode-produk.html (collection `catalog`, doc `id_product_index`,
+// field `json` berisi array [{hint, nama_produk}] dalam bentuk string JSON).
+// Ini menurunkan biaya dari ~4500 reads/kunjungan menjadi 1 read/kunjungan.
 let productCatalog = null; // [{ hint, nama_produk }]
 async function loadCatalogOnce() {
   if (productCatalog) return productCatalog;
   try {
-    const snap = await getDocs(collection(db, 'id_product'));
-    productCatalog = snap.docs.map(d => ({ hint: d.id, nama_produk: d.data().nama_produk || '' }));
+    const snap = await getDoc(doc(db, 'catalog', 'id_product_index'));
+    if (snap.exists()) {
+      productCatalog = JSON.parse(snap.data().json || '[]');
+    } else {
+      // Fallback aman: kalau index belum pernah dibuat (mis. sebelum
+      // import-kode-produk.html versi baru pernah dijalankan), baru kita
+      // tarik penuh dari collection sebagai jalan darurat SEKALI ini saja,
+      // sambil kasih tahu admin supaya jalankan ulang proses import.
+      console.warn('catalog/id_product_index belum ada — fallback ke full collection scan (mahal). Jalankan ulang Import Kode Produk untuk membangun index.');
+      showToast('Katalog autocomplete belum terindeks — jalankan ulang halaman Import Kode Produk', 'error');
+      const fullSnap = await getDocs(collection(db, 'id_product'));
+      productCatalog = fullSnap.docs.map(d => ({ hint: d.id, nama_produk: d.data().nama_produk || '' }));
+    }
   } catch (e) {
     productCatalog = [];
     showToast('Gagal memuat katalog kode produk: ' + e.message, 'error');
