@@ -192,7 +192,17 @@ async function runImport() {
       fill.style.width = pct + '%';
       label.textContent = `Mengimpor... ${done} / ${parsedRows.length}`;
     }
-    label.textContent = `Selesai! ${done} produk diimpor ke collection id_product.`;
+
+    // ── [FIX #1] Bangun ulang katalog gabungan (1 dokumen) untuk autocomplete ──
+    // Sebelumnya halaman "Produk & Target" harus getDocs() ke seluruh
+    // collection id_product (ribuan reads) setiap kali admin mengetik nama
+    // produk pertama kali di suatu kunjungan. Dengan menulis katalog gabungan
+    // di sini (yang datanya SUDAH ada di memori import ini, jadi tidak perlu
+    // baca ulang dari Firestore), halaman Produk & Target cukup 1 getDoc().
+    label.textContent = `Membangun ulang katalog gabungan untuk autocomplete...`;
+    await rebuildCatalogIndex();
+
+    label.textContent = `Selesai! ${done} produk diimpor ke collection id_product, dan katalog autocomplete diperbarui.`;
     showToast(`${done} kode produk berhasil diimpor`);
   } catch (err) {
     showToast('Gagal impor: ' + err.message, 'error');
@@ -201,6 +211,39 @@ async function runImport() {
     document.getElementById('cancelBtn').disabled = false;
     document.getElementById('importBtn').disabled = false;
   }
+}
+
+// ── [FIX #1] Tulis katalog id_product gabungan ke 1 dokumen ──
+// Dokumen ini yang nanti dibaca oleh produk-target.html (1 read, bukan
+// ribuan). Kita tidak perlu getDocs(id_product) lagi untuk membangun
+// katalog ini, karena file yang baru diimpor (parsedRows) sudah memuat
+// SELURUH baris dari file Excel/CSV yang sama. Kalau import dilakukan
+// per-batch/tambahan (bukan replace total), gunakan mergeWithExisting
+// di bawah supaya entri lama yang tidak ada di file baru tidak hilang.
+async function rebuildCatalogIndex() {
+  let catalog = parsedRows.map(r => ({ hint: r.hint, nama_produk: r.nama_produk }));
+
+  // Merge dengan katalog lama (kalau ada) supaya produk lama yang tidak
+  // ikut di file import kali ini tetap muncul di autocomplete.
+  try {
+    const existingSnap = await getDoc(doc(db, 'catalog', 'id_product_index'));
+    if (existingSnap.exists()) {
+      const existing = JSON.parse(existingSnap.data().json || '[]');
+      const newHints = new Set(catalog.map(c => c.hint));
+      const kept = existing.filter(c => !newHints.has(c.hint));
+      catalog = [...kept, ...catalog];
+    }
+  } catch (e) {
+    console.warn('Tidak bisa baca katalog lama, akan ditimpa total:', e.message);
+  }
+
+  catalog.sort((a, b) => a.nama_produk.localeCompare(b.nama_produk));
+
+  await setDoc(doc(db, 'catalog', 'id_product_index'), {
+    json: JSON.stringify(catalog),
+    count: catalog.length,
+    updated_at: new Date().toISOString()
+  });
 }
 
 init();
