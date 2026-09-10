@@ -134,7 +134,7 @@ async function init() {
   await loadMachineOptions(filterMachine);
   await loadSessions();
 }
-  
+
 let activeTab = 'session';
 let logLoaded = false;
 
@@ -149,6 +149,10 @@ window.switchTab = function(tab) {
 };
 
 window.refreshActive = function() {
+  // [FIX #2] "Cari" dengan filter tanggal/mesin yang sama seperti sebelumnya
+  // dianggap query baru → invalidate cache log supaya tab log ikut ambil
+  // rentang yang baru saat dibuka lagi.
+  logLoaded = false;
   if (activeTab==='session') loadSessions(); else loadLogs();
 };
 
@@ -167,6 +171,15 @@ async function loadMachineOptions(preselect='') {
 }
 
 // ── LOAD SESI ──
+// [FIX #2] SEBELUM: selalu getDocs(sessions, orderBy, limit(500)) lalu
+// filter tanggal/mesin di client — artinya tiap klik "Cari"/"Refresh" bisa
+// menarik hingga 500 dokumen sesi walau rentang tanggal yang diminta cuma
+// mencakup segelintir sesi.
+// SESUDAH: rentang tanggal (dan mesin, kalau composite index tersedia)
+// dikirim sebagai where() ke Firestore, supaya hanya dokumen yang benar-
+// benar masuk rentang yang ditarik. limit(1000) di sini murni jaring
+// pengaman (mencegah 1 query tunggal menarik puluhan ribu dokumen kalau
+// rentang tanggalnya sangat lebar), bukan batas normal operasional.
 window.loadSessions = async function(silent=false) {
   const from=document.getElementById('fFrom').value;
   const to=document.getElementById('fTo').value;
@@ -174,6 +187,53 @@ window.loadSessions = async function(silent=false) {
   const status=document.getElementById('fStatus').value;
   const tbody=document.getElementById('bodySession');
   if (!silent) tbody.innerHTML=`<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text2)">Memuat...</td></tr>`;
+
+  const SAFETY_CAP = 1000;
+  const fromDate = from ? new Date(from) : null;
+  const toDate2  = to   ? new Date(to+'T23:59:59') : null;
+
+  let rows = [];
+  let usedFallback = false;
+
+  // Percobaan 1: query paling hemat — filter tanggal (+ mesin bila ada)
+  // langsung di Firestore. Butuh composite index kalau kombinasi
+  // where(machine_code)+where(started_at range)+orderBy(started_at)
+  // dipakai bersamaan; Firestore console akan kasih link bikin index
+  // otomatis kalau ini pertama kali dipakai dan index belum ada.
+  try {
+    const constraints = [];
+    if (machine)   constraints.push(where('machine_code','==',machine));
+    if (fromDate)  constraints.push(where('started_at','>=',fromDate));
+    if (toDate2)   constraints.push(where('started_at','<=',toDate2));
+    constraints.push(orderBy('started_at','desc'));
+    constraints.push(limit(SAFETY_CAP));
+    const q = query(collection(db,'sessions'), ...constraints);
+    rows = (await getDocs(q)).docs.map(d=>({id:d.id,...d.data()}));
+  } catch(e) {
+    console.warn('Query hemat gagal (kemungkinan index belum ada), coba tanpa filter mesin:', e.message);
+    // Percobaan 2: lepas filter mesin (equality), tetap pakai range tanggal.
+    // Range tanggal + orderBy pada field yang sama TIDAK butuh composite
+    // index, jadi ini seharusnya selalu berhasil.
+    try {
+      const constraints = [];
+      if (fromDate) constraints.push(where('started_at','>=',fromDate));
+      if (toDate2)  constraints.push(where('started_at','<=',toDate2));
+      constraints.push(orderBy('started_at','desc'));
+      constraints.push(limit(SAFETY_CAP));
+      const q = query(collection(db,'sessions'), ...constraints);
+      rows = (await getDocs(q)).docs.map(d=>({id:d.id,...d.data()}));
+      if (machine) rows = rows.filter(r => (r.machine_code||r.id)===machine);
+    } catch(e2) {
+      console.warn('Query dengan range tanggal juga gagal, fallback ke limit(500) lama:', e2.message);
+      usedFallback = true;
+      try {
+        rows=(await getDocs(query(collection(db,'sessions'),orderBy('started_at','desc'),limit(500)))).docs.map(d=>({id:d.id,...d.data()}));
+      } catch(e3) {
+        try { rows=(await getDocs(query(collection(db,'sessions'),limit(500)))).docs.map(d=>({id:d.id,...d.data()})); }
+        catch(e4){ console.error(e4); }
+      }
+    }
+  }
 
   // Helper: konversi Firestore Timestamp / string ISO ke JS Date
   const toDate = v => {
@@ -183,32 +243,30 @@ window.loadSessions = async function(silent=false) {
     return new Date(v);
   };
 
-  let rows=[];
-  try {
-    // Ambil semua, filter client-side agar tidak butuh composite index
-    let q = query(collection(db,'sessions'), orderBy('started_at','desc'), limit(500));
-    rows = (await getDocs(q)).docs.map(d=>({id:d.id,...d.data()}));
-  } catch(e) {
-    console.warn('orderBy fallback:', e.message);
-    try { rows=(await getDocs(query(collection(db,'sessions'),limit(500)))).docs.map(d=>({id:d.id,...d.data()})); }
-    catch(e2){console.error(e2);}
+  // Filter yang TIDAK bisa didorong ke Firestore (status complete itu
+  // turunan dari 2 field, bukan filter langsung) tetap di client, tapi
+  // sekarang dijalankan di atas dataset yang sudah jauh lebih kecil.
+  if (usedFallback) {
+    // Kalau kepaksa pakai fallback lama, filter tanggal & mesin masih
+    // perlu dilakukan manual karena query fallback tidak menerapkannya.
+    if (from)    rows=rows.filter(r=>{ const d=toDate(r.started_at); return !d||d>=fromDate; });
+    if (to)      rows=rows.filter(r=>{ const d=toDate(r.started_at); return !d||d<=toDate2; });
+    if (machine) rows=rows.filter(r=>(r.machine_code||r.id)===machine);
   }
-
-  // Filter client-side — handle Firestore Timestamp & string keduanya
-  if (from) rows=rows.filter(r=>{ const d=toDate(r.started_at); return !d||d>=new Date(from); });
-  if (to)   rows=rows.filter(r=>{ const d=toDate(r.started_at); return !d||d<=new Date(to+'T23:59:59'); });
-  if (machine) rows=rows.filter(r=>(r.machine_code||r.id)===machine);
   if (status==='complete') rows=rows.filter(r=>r.target>0&&(r.count||0)>=r.target);
   else if (status) rows=rows.filter(r=>r.status===status);
-  rows.sort((a,b)=>(b.started_at?.toDate?.()??new Date(0))-(a.started_at?.toDate?.()??new Date(0)));
+  rows.sort((a,b)=>(toDate(b.started_at)??new Date(0))-(toDate(a.started_at)??new Date(0)));
   allSessions=rows;
   renderSessions(rows);
   const now=new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  document.getElementById('countSession').textContent=`${rows.length} sesi`;
+  document.getElementById('countSession').textContent=`${rows.length} sesi${usedFallback?' (mode fallback)':''}`;
   document.getElementById('refreshSession').textContent=`Update: ${now}`;
 };
 
 // ── LOAD LOGS (rekam jejak per interval) ──
+// [FIX #2] Sama pola dengan loadSessions: rentang tanggal didorong ke
+// Firestore lewat where('timestamp', >=/<=) sebelum orderBy+limit,
+// alih-alih menarik limit(500) penuh lalu difilter di client.
 window.loadLogs = async function(silent=false) {
   const from=document.getElementById('fFrom').value;
   const to=document.getElementById('fTo').value;
@@ -216,27 +274,44 @@ window.loadLogs = async function(silent=false) {
   const tbody=document.getElementById('bodyLog');
   if (!silent) tbody.innerHTML=`<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text2)">Memuat...</td></tr>`;
 
+  const SAFETY_CAP = 1000;
+  const fromDate = from ? new Date(from) : null;
+  const toDate2  = to   ? new Date(to+'T23:59:59') : null;
+
   let rows=[];
   try {
-    // Query collectionGroup logs
-    let q = query(collectionGroup(db,'logs'), orderBy('timestamp','desc'), limit(500));
+    const constraints = [];
+    if (fromDate) constraints.push(where('timestamp','>=',fromDate));
+    if (toDate2)  constraints.push(where('timestamp','<=',toDate2));
+    constraints.push(orderBy('timestamp','desc'));
+    constraints.push(limit(SAFETY_CAP));
+    const q = query(collectionGroup(db,'logs'), ...constraints);
     rows=(await getDocs(q)).docs.map(d=>({id:d.id,_path:d.ref.path,...d.data()}));
   } catch(e) {
-    console.warn('collectionGroup fallback:', e.message);
-    // Fallback: ambil dari setiap sesi yang sudah di-load
-    if (allSessions.length > 0) {
-      for (const s of allSessions.slice(0,20)) {
-        try {
-          const logsSnap=await getDocs(collection(db,'sessions',s.id,'logs'));
-          logsSnap.docs.forEach(d=>rows.push({id:d.id,_sessionId:s.id,machine_code:s.machine_code,_path:d.ref.path,...d.data()}));
-        } catch(e2){}
+    console.warn('collectionGroup dengan range gagal, coba tanpa range dulu:', e.message);
+    try {
+      let q = query(collectionGroup(db,'logs'), orderBy('timestamp','desc'), limit(SAFETY_CAP));
+      rows=(await getDocs(q)).docs.map(d=>({id:d.id,_path:d.ref.path,...d.data()}));
+    } catch(e2) {
+      console.warn('collectionGroup fallback:', e2.message);
+      // Fallback: ambil dari setiap sesi yang sudah di-load (dataset ini
+      // sekarang sudah dibatasi rentang tanggal berkat fix loadSessions,
+      // jadi jumlah sesi yang di-loop di sini pun sudah jauh lebih kecil).
+      if (allSessions.length > 0) {
+        for (const s of allSessions.slice(0,20)) {
+          try {
+            const logsSnap=await getDocs(collection(db,'sessions',s.id,'logs'));
+            logsSnap.docs.forEach(d=>rows.push({id:d.id,_sessionId:s.id,machine_code:s.machine_code,_path:d.ref.path,...d.data()}));
+          } catch(e3){}
+        }
       }
     }
   }
 
-  // Filter logs client-side
-  if (from) rows=rows.filter(r=>{ const d=r.timestamp?.toDate?r.timestamp.toDate():r.timestamp?.seconds?new Date(r.timestamp.seconds*1000):new Date(r.timestamp); return !r.timestamp||d>=new Date(from); });
-  if (to)   rows=rows.filter(r=>{ const d=r.timestamp?.toDate?r.timestamp.toDate():r.timestamp?.seconds?new Date(r.timestamp.seconds*1000):new Date(r.timestamp); return !r.timestamp||d<=new Date(to+'T23:59:59'); });
+  // Filter logs client-side — tanggal (kalau query di atas tidak sempat
+  // menerapkannya) dan mesin (belum ada composite index untuk itu).
+  if (from) rows=rows.filter(r=>{ const d=r.timestamp?.toDate?r.timestamp.toDate():r.timestamp?.seconds?new Date(r.timestamp.seconds*1000):new Date(r.timestamp); return !r.timestamp||d>=fromDate; });
+  if (to)   rows=rows.filter(r=>{ const d=r.timestamp?.toDate?r.timestamp.toDate():r.timestamp?.seconds?new Date(r.timestamp.seconds*1000):new Date(r.timestamp); return !r.timestamp||d<=toDate2; });
 
   // Filter mesin — ambil machine_code dari path (sessions/{sesId}/logs/{logId})
   if (machine) {
